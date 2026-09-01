@@ -3,7 +3,7 @@
     <xacro:arg name="initial_positions_file" default="initial_positions.yaml" />
 
     <!-- Import fairino30_v6_robot urdf file -->
-    <xacro:include filename="$(find fairino_description)/urdf/fairino30_v6.urdf" />
+    <xacro:include filename="$(find fairino_flange_description)/urdf/fairino30_v6_with_flange.urdf.xacro" />
 
     <!-- Import control_xacro -->
     <xacro:include filename="fairino30_v6_robot.ros2_control.xacro" />
