@@ -1,0 +1,332 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot
+  name="fairino3mt_v6_robot">
+  <link
+    name="base_link">
+    <inertial>
+      <origin
+        xyz="-1.5389E-05 0.0050006 0.035526"
+        rpy="0 0 0" />
+      <mass
+        value="0.60007" />
+      <inertia
+        ixx="0.00077666"
+        ixy="5.9011E-07"
+        ixz="4.3886E-07"
+        iyy="0.00066312"
+        iyz="-1.924E-05"
+        izz="0.00080686" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://fairino_description/meshes/fairino3_mt_v6/base_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+  </link>
+  <link
+    name="shoulder_link">
+    <inertial>
+      <origin
+        xyz="-0.00016 -0.01399 0.00153"
+        rpy="0 0 0" />
+      <mass
+        value="1.69" />
+      <inertia
+        ixx="0.00230233"
+        ixy="0.00000796"
+        ixz="0.00000988"
+        iyy="0.00172232"
+        iyz="0.00003216"
+        izz="0.00230714" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://fairino_description/meshes/fairino3_mt_v6/shoulder_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+  </link>
+  <joint
+    name="joint1"
+    type="revolute">
+    <origin
+      xyz="0 0 0.1398"
+      rpy="-3.1416 0 3.1416" />
+    <parent
+      link="base_link" />
+    <child
+      link="shoulder_link" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="-3.054"
+      upper="3.054"
+      effort="0"
+      velocity="2.618" />
+  </joint>
+  <link
+    name="upperarm_link">
+    <inertial>
+      <origin
+        xyz="0.14 0 0.10134"
+        rpy="0 0 0" />
+      <mass
+        value="3.73" />
+      <inertia
+        ixx="0.00529686"
+        ixy="0.00005608"
+        ixz="0.00000013"
+        iyy="0.07120429"
+        iyz="0.00000005"
+        izz="0.06998187" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://fairino_description/meshes/fairino3_mt_v6/upperarm_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+  </link>
+  <joint
+    name="joint2"
+    type="revolute">
+    <origin
+      xyz="-1.2826E-05 -0.114 0"
+      rpy="-1.6057 0 3.1416" />
+    <parent
+      link="shoulder_link" />
+    <child
+      link="upperarm_link" />
+    <axis
+      xyz="0.00011251 -0.034899 0.99939" />
+    <limit
+      lower="-4.6251"
+      upper="1.4835"
+      effort="0"
+      velocity="2.618" />
+  </joint>
+  <link
+    name="forearm_link">
+    <inertial>
+      <origin
+        xyz="0.06324 0.00008 0.01104"
+        rpy="0 0 0" />
+      <mass
+        value="1.84" />
+      <inertia
+        ixx="0.00224646"
+        ixy="0.00000255"
+        ixz="0.00000765"
+        iyy="0.01764629"
+        iyz="0.00000075"
+        izz="0.01732032" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://fairino_description/meshes/fairino3_mt_v6/forearm_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+  </link>
+  <joint
+    name="joint3"
+    type="revolute">
+    <origin
+      xyz="-0.28 0 3.1484E-05"
+      rpy="3.1416 0 3.1416" />
+    <parent
+      link="upperarm_link" />
+    <child
+      link="forearm_link" />
+    <axis
+      xyz="0.00011251 0.034899 -0.99939" />
+    <limit
+      lower="-2.618"
+      upper="2.618"
+      effort="0"
+      velocity="2.618" />
+  </joint>
+  <link
+    name="wrist1_link">
+    <inertial>
+      <origin
+        xyz="0.0001 -0.00203 0.01255"
+        rpy="0 0 0" />
+      <mass
+        value="1.2" />
+      <inertia
+        ixx="0.00131806"
+        ixy="-0.00000258"
+        ixz="-0.00000247"
+        iyy="0.00130342"
+        iyz="-0.00002666"
+        izz="0.0009916" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://fairino_description/meshes/fairino3_mt_v6/wrist1_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+  </link>
+  <joint
+    name="joint4"
+    type="revolute">
+    <origin
+      xyz="0.24001 0.0039775 0.1139"
+      rpy="0 0 0" />
+    <parent
+      link="forearm_link" />
+    <child
+      link="wrist1_link" />
+    <axis
+      xyz="0.00011251 0.034899 -0.99939" />
+    <limit
+      lower="-4.6251"
+      upper="1.4835"
+      effort="0"
+      velocity="3.141" />
+  </joint>
+  <link
+    name="wrist2_link">
+    <inertial>
+      <origin
+        xyz="-0.0001 0.00203 0.01255"
+        rpy="0 0 0" />
+      <mass
+        value="1.2" />
+      <inertia
+        ixx="0.00131806"
+        ixy="-0.00000258"
+        ixz="0.00000247"
+        iyy="0.00130342"
+        iyz="0.00002666"
+        izz="0.0009916" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://fairino_description/meshes/fairino3_mt_v6/wrist2_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+  </link>
+  <joint
+    name="joint5"
+    type="revolute">
+    <origin
+      xyz="-1.1476E-05 -0.0035597 -0.10194"
+      rpy="-1.6057 0 0" />
+    <parent
+      link="wrist1_link" />
+    <child
+      link="wrist2_link" />
+    <axis
+      xyz="0 0 -1" />
+    <limit
+      lower="0"
+      upper="6.1087"
+      effort="0"
+      velocity="3.141" />
+  </joint>
+  <link
+    name="wrist3_link">
+    <inertial>
+      <origin
+        xyz="-0.00148 -0.00154 -0.0179"
+        rpy="0 0 0" />
+      <mass
+        value="0.53" />
+      <inertia
+        ixx="0.00033622"
+        ixy="0.00000116"
+        ixz="0.00000051"
+        iyy="0.00033508"
+        iyz="0.00000089"
+        izz="0.00053494" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://fairino_description/meshes/fairino3_mt_v6/wrist3_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="1 1 1 1" />
+      </material>
+    </visual>
+  </link>
+  <joint
+    name="joint6"
+    type="revolute">
+    <origin
+      xyz="0 0 -0.102"
+      rpy="1.6057 0 0" />
+    <parent
+      link="wrist2_link" />
+    <child
+      link="wrist3_link" />
+    <axis
+      xyz="0.00011251 0.034899 -0.99939" />
+    <limit
+      lower="-3.054"
+      upper="3.054"
+      effort="0"
+      velocity="3.141" />
+  </joint>
+</robot>
