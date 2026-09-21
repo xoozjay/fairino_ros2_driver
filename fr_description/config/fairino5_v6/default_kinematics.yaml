@@ -1,0 +1,28 @@
+# Nominal kinematics for fairino5_v6, extracted from references/fairino_vendor/fairino_description/urdf/fairino5_v6.urdf.
+# Joint origins are relative to the parent link frame.
+kinematics:
+  shoulder_pan_joint:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    axis: 0 0 1
+  shoulder_lift_joint:
+    xyz: 0 0 0.152
+    rpy: 1.5708 0 0
+    axis: 0 0 1
+  elbow_joint:
+    xyz: -0.425 0 0
+    rpy: 0 0 0
+    axis: 0 0 1
+  wrist_1_joint:
+    xyz: -0.39501 0 0
+    rpy: 0 0 0
+    axis: 0 0 1
+  wrist_2_joint:
+    xyz: 0 0 0.1021
+    rpy: 1.5708 0 0
+    axis: 0 0 1
+  wrist_3_joint:
+    xyz: 0 0 0.102
+    rpy: -1.5708 0 0
+    axis: 0 0 1
+flange_offset: 0.1

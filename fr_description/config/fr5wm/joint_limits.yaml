@@ -1,0 +1,32 @@
+# Joint limits for fr5wm, extracted from references/fairino_vendor/fairino_description/urdf/FR5WM.urdf.
+joint_limits:
+  shoulder_pan_joint:
+    lower: -3.124
+    upper: 3.124
+    effort: 150.0
+    velocity: 3.15
+  shoulder_lift_joint:
+    lower: -4.6949
+    upper: 1.5533
+    effort: 150.0
+    velocity: 3.15
+  elbow_joint:
+    lower: -2.40855
+    upper: 2.40855
+    effort: 150.0
+    velocity: 3.15
+  wrist_1_joint:
+    lower: -3.124
+    upper: 3.124
+    effort: 28.0
+    velocity: 3.2
+  wrist_2_joint:
+    lower: -1.5533
+    upper: 4.6949
+    effort: 28.0
+    velocity: 3.2
+  wrist_3_joint:
+    lower: -3.124
+    upper: 3.124
+    effort: 28.0
+    velocity: 3.2

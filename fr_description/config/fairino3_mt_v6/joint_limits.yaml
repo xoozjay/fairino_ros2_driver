@@ -1,0 +1,32 @@
+# Joint limits for fairino3_mt_v6, extracted from references/fairino_vendor/fairino_description/urdf/fairino3_mt_v6.urdf.
+joint_limits:
+  shoulder_pan_joint:
+    lower: -3.054
+    upper: 3.054
+    effort: 0.0
+    velocity: 2.618
+  shoulder_lift_joint:
+    lower: -4.6251
+    upper: 1.4835
+    effort: 0.0
+    velocity: 2.618
+  elbow_joint:
+    lower: -2.618
+    upper: 2.618
+    effort: 0.0
+    velocity: 2.618
+  wrist_1_joint:
+    lower: -4.6251
+    upper: 1.4835
+    effort: 0.0
+    velocity: 3.141
+  wrist_2_joint:
+    lower: 0.0
+    upper: 6.1087
+    effort: 0.0
+    velocity: 3.141
+  wrist_3_joint:
+    lower: -3.054
+    upper: 3.054
+    effort: 0.0
+    velocity: 3.141

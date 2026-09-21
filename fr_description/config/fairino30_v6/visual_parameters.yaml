@@ -1,0 +1,66 @@
+# Visual/collision geometry for fairino30_v6, extracted from references/fairino_vendor/fairino_description/urdf/fairino30_v6.urdf.
+visual:
+  base_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/fairino30_v6/base_link.STL
+    rgba: 0.89804 0.91765 0.92941 1
+  shoulder_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/fairino30_v6/shoulder_link.STL
+    rgba: 0.89804 0.91765 0.92941 1
+  upper_arm_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/fairino30_v6/uppperarm_link.STL
+    rgba: 0.89804 0.91765 0.92941 1
+  forearm_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/fairino30_v6/forearm_link.STL
+    rgba: 0.89804 0.91765 0.92941 1
+  wrist_1_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/fairino30_v6/wrist1_link.STL
+    rgba: 0.89804 0.91765 0.92941 1
+  wrist_2_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/fairino30_v6/wrist2_link.STL
+    rgba: 0.89804 0.91765 0.92941 1
+  wrist_3_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/fairino30_v6/wrist3_link.STL
+    rgba: 0.89804 0.91765 0.92941 1
+collision:
+  base_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/fairino30_v6/base_link.STL
+  shoulder_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/fairino30_v6/shoulder_link.STL
+  upper_arm_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/fairino30_v6/uppperarm_link.STL
+  forearm_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/fairino30_v6/forearm_link.STL
+  wrist_1_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/fairino30_v6/wrist1_link.STL
+  wrist_2_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/fairino30_v6/wrist2_link.STL
+  wrist_3_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/fairino30_v6/wrist3_link.STL

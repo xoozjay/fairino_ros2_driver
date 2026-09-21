@@ -22,6 +22,6 @@
 ## License
 Apache-2.0
 
-fairino_description fairino*_moveit2_config 提取自 [frcobot_ros2](https://github.com/FAIR-INNOVATION/frcobot_ros2)，官方未明确协议，[声称](assets/license-unknown.webp)允许闭源使用。
+`fr_description` 的参数与 mesh 提取自 [frcobot_ros2](https://github.com/FAIR-INNOVATION/frcobot_ros2) 的 URDF。官方未明确协议，[声称](assets/license-unknown.webp)允许闭源使用。
 
 “法奥”“法奥意威”商标由相关方所有。

@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="fr_robot">
+
+  <!--
+    Standalone top-level description: instantiates the fr_robot macro for
+    one model. Consumed by view_robot.launch.py; downstream packages (control,
+    MoveIt) should include fr_macro.xacro and call the macro directly so
+    they can pass tf_prefix/parent.
+
+    Arguments:
+      model     : one of config/ subdirectories (default fairino20_v6)
+      tf_prefix : frame prefix (default "")
+  -->
+  <xacro:arg name="model" default="fairino20_v6"/>
+  <xacro:arg name="tf_prefix" default=""/>
+
+  <xacro:include filename="$(find fr_description)/urdf/fr_macro.xacro"/>
+
+  <xacro:fr_robot
+      tf_prefix="$(arg tf_prefix)"
+      kinematics_parameters_file="$(find fr_description)/config/$(arg model)/default_kinematics.yaml"
+      joint_limits_parameters_file="$(find fr_description)/config/$(arg model)/joint_limits.yaml"
+      physical_parameters_file="$(find fr_description)/config/$(arg model)/physical_parameters.yaml"
+      visual_parameters_file="$(find fr_description)/config/$(arg model)/visual_parameters.yaml"/>
+
+</robot>

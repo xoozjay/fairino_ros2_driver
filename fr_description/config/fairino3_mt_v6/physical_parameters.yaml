@@ -1,0 +1,72 @@
+# Inertial parameters for fairino3_mt_v6, extracted from references/fairino_vendor/fairino_description/urdf/fairino3_mt_v6.urdf.
+physical:
+  base_link:
+    mass: 0.60007
+    com: -1.5389E-05 0.0050006 0.035526
+    inertia:
+      ixx: 0.00077666
+      ixy: 5.9011e-07
+      ixz: 4.3886e-07
+      iyy: 0.00066312
+      iyz: -1.924e-05
+      izz: 0.00080686
+  shoulder_link:
+    mass: 1.69
+    com: -0.00016 -0.01399 0.00153
+    inertia:
+      ixx: 0.00230233
+      ixy: 7.96e-06
+      ixz: 9.88e-06
+      iyy: 0.00172232
+      iyz: 3.216e-05
+      izz: 0.00230714
+  upper_arm_link:
+    mass: 3.73
+    com: 0.14 0 0.10134
+    inertia:
+      ixx: 0.00529686
+      ixy: 5.608e-05
+      ixz: 1.3e-07
+      iyy: 0.07120429
+      iyz: 5.0e-08
+      izz: 0.06998187
+  forearm_link:
+    mass: 1.84
+    com: 0.06324 0.00008 0.01104
+    inertia:
+      ixx: 0.00224646
+      ixy: 2.55e-06
+      ixz: 7.65e-06
+      iyy: 0.01764629
+      iyz: 7.5e-07
+      izz: 0.01732032
+  wrist_1_link:
+    mass: 1.2
+    com: 0.0001 -0.00203 0.01255
+    inertia:
+      ixx: 0.00131806
+      ixy: -2.58e-06
+      ixz: -2.47e-06
+      iyy: 0.00130342
+      iyz: -2.666e-05
+      izz: 0.0009916
+  wrist_2_link:
+    mass: 1.2
+    com: -0.0001 0.00203 0.01255
+    inertia:
+      ixx: 0.00131806
+      ixy: -2.58e-06
+      ixz: 2.47e-06
+      iyy: 0.00130342
+      iyz: 2.666e-05
+      izz: 0.0009916
+  wrist_3_link:
+    mass: 0.53
+    com: -0.00148 -0.00154 -0.0179
+    inertia:
+      ixx: 0.00033622
+      ixy: 1.16e-06
+      ixz: 5.1e-07
+      iyy: 0.00033508
+      iyz: 8.9e-07
+      izz: 0.00053494

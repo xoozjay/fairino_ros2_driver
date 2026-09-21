@@ -1,0 +1,72 @@
+# Inertial parameters for fr5wm, extracted from references/fairino_vendor/fairino_description/urdf/FR5WM.urdf.
+physical:
+  base_link:
+    mass: 0.78393
+    com: -0.00049027 -0.00045095 0.032527
+    inertia:
+      ixx: 0.0013854
+      ixy: 1.1455e-05
+      ixz: -1.0642e-05
+      iyy: 0.0013849
+      iyz: -9.7435e-06
+      izz: 0.001977
+  shoulder_link:
+    mass: 2.26
+    com: -3.6139E-07 -0.0024164 0.13521
+    inertia:
+      ixx: 0.0033227
+      ixy: -5.0648e-08
+      ixz: -6.3401e-09
+      iyy: 0.0032419
+      iyz: 4.3768e-05
+      izz: 0.0023129
+  upper_arm_link:
+    mass: 4.53
+    com: -0.19609 1.3185E-07 0.11207
+    inertia:
+      ixx: 0.0087492
+      ixy: 7.5596e-08
+      ixz: 1.1257e-05
+      iyy: 0.045099
+      iyz: -4.721e-10
+      izz: 0.043531
+  forearm_link:
+    mass: 1.56
+    com: -0.00344 -1.5607E-07 0.014599
+    inertia:
+      ixx: 0.0014524
+      ixy: 6.8087e-09
+      ixz: -3.2511e-05
+      iyy: 0.0020112
+      iyz: -2.4944e-08
+      izz: 0.0019076
+  wrist_1_link:
+    mass: 1.97
+    com: 0.0010775 -4.849E-07 0.23673
+    inertia:
+      ixx: 0.054511
+      ixy: 2.1827e-08
+      ixz: -0.0010509
+      iyy: 0.055102
+      iyz: 1.2523e-07
+      izz: 0.0047409
+  wrist_2_link:
+    mass: 1.56
+    com: -0.00344 1.5604E-07 0.098294
+    inertia:
+      ixx: 0.0014524
+      ixy: -6.8085e-09
+      ixz: 3.2511e-05
+      iyy: 0.0020112
+      iyz: -2.4945e-08
+      izz: 0.0019076
+  wrist_3_link:
+    mass: 0.35
+    com: 7.559E-05 1.3854E-05 -0.023381
+    inertia:
+      ixx: 0.00028785
+      ixy: -2.0582e-09
+      ixz: -1.3892e-07
+      iyy: 0.00028896
+      iyz: 1.8115e-07
+      izz: 0.00042655

@@ -1,0 +1,66 @@
+# Visual/collision geometry for fr3wml, extracted from references/fairino_vendor/fairino_description/urdf/FR3WML.urdf.
+visual:
+  base_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/FR3WML/visual/base_link.dae
+    rgba: 0.89804 0.91765 0.92941 1
+  shoulder_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/FR3WML/visual/shoulder_Link.dae
+    rgba: 0.89804 0.91765 0.92941 1
+  upper_arm_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/FR3WML/visual/upperarm_Link.dae
+    rgba: 0.89804 0.91765 0.92941 1
+  forearm_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/FR3WML/visual/forearm_Link.dae
+    rgba: 0.89804 0.91765 0.92941 1
+  wrist_1_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/FR3WML/visual/wrist1_Link.dae
+    rgba: 0.89804 0.91765 0.92941 1
+  wrist_2_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/FR3WML/visual/wrist2_Link.dae
+    rgba: 0.89804 0.91765 0.92941 1
+  wrist_3_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/FR3WML/visual/wrist3_Link.dae
+    rgba: 0.89804 0.91765 0.92941 1
+collision:
+  base_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/FR3WML/collision/base_link.STL
+  shoulder_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/FR3WML/collision/shoulder_Link.STL
+  upper_arm_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/FR3WML/collision/upperarm_Link.STL
+  forearm_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/FR3WML/collision/forearm_Link.STL
+  wrist_1_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/FR3WML/collision/wrist1_Link.STL
+  wrist_2_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/FR3WML/collision/wrist2_Link.STL
+  wrist_3_link:
+    xyz: 0 0 0
+    rpy: 0 0 0
+    mesh: package://fr_description/meshes/FR3WML/collision/wrist3_Link.STL

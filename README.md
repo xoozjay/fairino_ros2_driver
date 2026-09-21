@@ -24,6 +24,6 @@ FAIRINO documentation:
 
 Apache-2.0
 
-`fairino_description` and `fairino*_moveit2_config` were extracted from [frcobot_ros2](https://github.com/FAIR-INNOVATION/frcobot_ros2). The official project does not explicitly specify a license, but [claims](assets/license-unknown.webp) that closed-source use is permitted.
+`fr_description` is derived from the URDF set of [frcobot_ros2](https://github.com/FAIR-INNOVATION/frcobot_ros2). The upstream project does not explicitly specify a license, but [claims](assets/license-unknown.webp) that closed-source use is permitted.
 
 The “法奥” and “法奥意威” trademarks belong to their respective owners.
