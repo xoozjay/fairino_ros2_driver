@@ -1,0 +1,270 @@
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 78
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+        - /RobotModel Alice1/Description Topic1
+        - /RobotModel Bob1/Description Topic1
+        - /RobotModel Table1/Description Topic1
+      Splitter Ratio: 0.5
+    Tree Height: 749
+  - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
+  - Class: rviz_common/Time
+    Experimental: false
+    Name: Time
+    SyncMode: 0
+    SyncThreshold: 10
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 0.5
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Line Style:
+        Line Width: 0.03
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 12
+      Reference Frame: world
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Enabled Frames:
+        {}
+      Frame Timeout: 15
+      Frames:
+        All Enabled: false
+      Marker Alpha: 1
+      Marker Scale: 0.3
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Tree:
+        {}
+      Update Interval: 0
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Enabled Frames:
+        {}
+      Frame Timeout: 15
+      Frames:
+        All Enabled: false
+        alice_base_link:
+          Value: true
+        alice_flange:
+          Value: true
+        alice_tool0:
+          Value: true
+        bob_base_link:
+          Value: true
+        bob_flange:
+          Value: true
+        bob_tool0:
+          Value: true
+        world:
+          Value: true
+      Marker Alpha: 1
+      Marker Scale: 0.5
+      Name: TF Key Frames
+      Show Arrows: false
+      Show Axes: true
+      Show Names: true
+      Tree:
+        {}
+      Update Interval: 0
+      Value: true
+    - Alpha: 1
+      Class: rviz_default_plugins/RobotModel
+      Collision Enabled: false
+      Color Scheme: ""
+      Description File: ""
+      Description Source: Topic
+      Description Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /alice/robot_description
+      Enabled: true
+      Links:
+        All Links Enabled: true
+        Expand Joint Details: false
+        Expand Link Details: false
+        Expand Tree: true
+        Link Tree Style: Links in Alphabetic Order
+      Name: RobotModel Alice
+      TF Prefix: ""
+      Update Interval: 0
+      Value: true
+      Visual Enabled: true
+    - Alpha: 1
+      Class: rviz_default_plugins/RobotModel
+      Collision Enabled: false
+      Color Scheme: ""
+      Description File: ""
+      Description Source: Topic
+      Description Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /bob/robot_description
+      Enabled: true
+      Links:
+        All Links Enabled: true
+        Expand Joint Details: false
+        Expand Link Details: false
+        Expand Tree: true
+        Link Tree Style: Links in Alphabetic Order
+      Name: RobotModel Bob
+      TF Prefix: ""
+      Update Interval: 0
+      Value: true
+      Visual Enabled: true
+    - Alpha: 1
+      Class: rviz_default_plugins/RobotModel
+      Collision Enabled: false
+      Color Scheme: ""
+      Description File: ""
+      Description Source: Topic
+      Description Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /table/robot_description
+      Enabled: true
+      Links:
+        All Links Enabled: true
+        Expand Joint Details: false
+        Expand Link Details: false
+        Expand Tree: true
+        Link Tree Style: Links in Alphabetic Order
+      Name: RobotModel Table
+      TF Prefix: ""
+      Update Interval: 0
+      Value: true
+      Visual Enabled: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Default Light: true
+    Fixed Frame: world
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 3.2
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.06
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Field of View: 0.785
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0.6
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.01
+      Pitch: 0.35
+      Target Frame: world
+      Yaw: 1.05
+    Saved:
+      - Class: rviz_default_plugins/Orbit
+        Distance: 3.2
+        Enable Stereo Rendering:
+          Stereo Eye Separation: 0.06
+          Stereo Focal Distance: 1
+          Swap Stereo Eyes: false
+          Value: false
+        Field of View: 0.785
+        Focal Point:
+          X: 0
+          Y: 0
+          Z: 0.6
+        Focal Shape Fixed Size: true
+        Focal Shape Size: 0.05
+        Name: Overview (oblique)
+        Near Clip Distance: 0.01
+        Pitch: 0.35
+        Target Frame: world
+        Yaw: 1.05
+      - Class: rviz_default_plugins/Orbit
+        Distance: 2.0
+        Enable Stereo Rendering:
+          Stereo Eye Separation: 0.06
+          Stereo Focal Distance: 1
+          Swap Stereo Eyes: false
+          Value: false
+        Field of View: 0.785
+        Focal Point:
+          X: 0
+          Y: 0
+          Z: 0.9
+        Focal Shape Fixed Size: true
+        Focal Shape Size: 0.05
+        Name: Zero-pose check (closeup)
+        Near Clip Distance: 0.01
+        Pitch: 0.1
+        Target Frame: world
+        Yaw: 1.57
+      - Class: rviz_default_plugins/Orbit
+        Distance: 1.0
+        Enable Stereo Rendering:
+          Stereo Eye Separation: 0.06
+          Stereo Focal Distance: 1
+          Swap Stereo Eyes: false
+          Value: false
+        Field of View: 0.785
+        Focal Point:
+          X: 0
+          Y: 0
+          Z: 1.0
+        Focal Shape Fixed Size: true
+        Focal Shape Size: 0.05
+        Name: Flange closeup (both)
+        Near Clip Distance: 0.01
+        Pitch: 0
+        Target Frame: world
+        Yaw: 3.14
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 1000
+  Hide Left Dock: false
+  Hide Right Dock: false
+  Time:
+    collapsed: false
+  Views:
+    collapsed: false
+  Width: 1600

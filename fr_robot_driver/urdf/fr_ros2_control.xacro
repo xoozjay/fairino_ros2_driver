@@ -1,0 +1,83 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!--
+    fr_ros2_control: ros2_control tag generator for one Fairino robot.
+
+    Joint names are constructed with tf_prefix exactly like in the
+    fr_description macro, so the hardware interfaces match the URDF joints.
+
+    NOTE ros2_control conventions (verified against ros2_control 2.54.2 source
+    in references/ros2_control):
+      - <ros2_control type=...> must be lowercase ("system"); the comparison
+        in ResourceManager::load_urdf is case-sensitive, wrong case silently
+        skips the component and surfaces as "Wrong state or command interface
+        configuration"
+      - initial values use the key "initial_value"
+      - booleans use hardware_interface::parse_bool ("true"/"True")
+
+    Parameters:
+      tf_prefix               : joint-name prefix, must match the fr_robot macro call (default "")
+      use_mock_hardware       : use mock_components/GenericSystem instead of real hardware (default true)
+      initial_positions_file  : YAML with initial_positions map (unprefixed joint names)
+      mock_sensor_commands    : mock GPIO sensor commands (default false)
+
+    The real-hardware branch is a placeholder: the fr_robot_driver hardware
+    plugin will be filled in once the mock pipeline is validated end to end.
+  -->
+  <!-- Internal helper: one ros2_control joint (name prefixed like the URDF joints).
+       Initial values use the "initial_value" key (ros2_control 2.5x). -->
+  <xacro:macro name="_fr_hw_joint" params="joint_name tf_prefix initial_position">
+    <joint name="${tf_prefix}${joint_name}">
+      <command_interface name="position">
+        <param name="initial_value">${initial_position}</param>
+      </command_interface>
+      <state_interface name="position">
+        <param name="initial_value">${initial_position}</param>
+      </state_interface>
+      <state_interface name="velocity">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+    </joint>
+  </xacro:macro>
+
+  <xacro:macro name="fr_ros2_control" params="
+      tf_prefix:=''
+      use_mock_hardware:=true
+      mock_sensor_commands:='false'
+      initial_positions_file">
+
+    <xacro:property name="initial_positions"
+        value="${xacro.load_yaml(initial_positions_file)['initial_positions']}"/>
+
+    <ros2_control name="${tf_prefix}fr_robot" type="system">
+
+      <hardware>
+        <xacro:if value="${use_mock_hardware}">
+          <plugin>mock_components/GenericSystem</plugin>
+          <param name="mock_sensor_commands">${mock_sensor_commands}</param>
+        </xacro:if>
+        <xacro:unless value="${use_mock_hardware}">
+          <!-- placeholder: real Fairino hardware plugin (progressive development:
+               enabled once the mock pipeline below is validated) -->
+          <plugin>fr_robot_driver/FrRobotHardwareInterface</plugin>
+          <param name="tf_prefix">${tf_prefix}</param>
+        </xacro:unless>
+      </hardware>
+
+      <xacro:_fr_hw_joint joint_name="shoulder_pan_joint" tf_prefix="${tf_prefix}"
+          initial_position="${initial_positions['shoulder_pan_joint']}"/>
+      <xacro:_fr_hw_joint joint_name="shoulder_lift_joint" tf_prefix="${tf_prefix}"
+          initial_position="${initial_positions['shoulder_lift_joint']}"/>
+      <xacro:_fr_hw_joint joint_name="elbow_joint" tf_prefix="${tf_prefix}"
+          initial_position="${initial_positions['elbow_joint']}"/>
+      <xacro:_fr_hw_joint joint_name="wrist_1_joint" tf_prefix="${tf_prefix}"
+          initial_position="${initial_positions['wrist_1_joint']}"/>
+      <xacro:_fr_hw_joint joint_name="wrist_2_joint" tf_prefix="${tf_prefix}"
+          initial_position="${initial_positions['wrist_2_joint']}"/>
+      <xacro:_fr_hw_joint joint_name="wrist_3_joint" tf_prefix="${tf_prefix}"
+          initial_position="${initial_positions['wrist_3_joint']}"/>
+
+    </ros2_control>
+  </xacro:macro>
+</robot>

@@ -1,0 +1,42 @@
+# Controller configuration for one Fairino robot.
+#
+# Token substitution is done at launch time (launch/fr_control.launch.py):
+#   __PREFIX__ -> tf_prefix  (joint names are prefixed in the URDF so several
+#                             robots can share one TF tree)
+#   __NS__     -> "" or "/<namespace>"
+#
+# Format follows the ros2_control 2.5x spawner: the root key must be the
+# namespaced controller name and each controller must declare its plugin
+# `type` (see references/ros2_control/controller_manager/controller_manager/
+# controller_manager_services.py).
+#
+# The `controller_manager` section below is read by the launch file and
+# passed as controller_manager node parameters (not a root-key entry).
+
+controller_manager:
+  ros__parameters:
+    update_rate: 500  # Hz
+
+"__NS__/joint_state_broadcaster":
+  ros__parameters:
+    type: "joint_state_broadcaster/JointStateBroadcaster"
+
+"__NS__/joint_trajectory_controller":
+  ros__parameters:
+    type: "joint_trajectory_controller/JointTrajectoryController"
+    joints:
+      - __PREFIX__shoulder_pan_joint
+      - __PREFIX__shoulder_lift_joint
+      - __PREFIX__elbow_joint
+      - __PREFIX__wrist_1_joint
+      - __PREFIX__wrist_2_joint
+      - __PREFIX__wrist_3_joint
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    allow_partial_joints_goal: false
+    constraints:
+      stopped_velocity_tolerance: 0.01
+      goal_time: 0.0

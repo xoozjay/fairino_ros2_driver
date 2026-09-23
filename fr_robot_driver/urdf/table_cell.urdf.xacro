@@ -1,0 +1,69 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="fr_table_cell">
+
+  <!--
+    Static workbench scene for the dual-robot demo cell: a 1.2 m x 1.8 m
+    workbench whose top is at 0.75 m. The two Fairino robots are NOT part of
+    this description; they are attached to the same shared "world" frame via
+    static transforms from the launch file (namespace + tf_prefix isolation).
+
+    Consumed by dual_fr_cell.launch.py through its own robot_state_publisher
+    so RViz shows the table alongside both robots.
+  -->
+
+  <link name="world"/>
+
+  <link name="table_top">
+    <visual>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <box size="1.2 1.8 0.04"/>
+      </geometry>
+      <material name="table_grey">
+        <color rgba="0.55 0.55 0.58 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0"/>
+      <geometry>
+        <box size="1.2 1.8 0.04"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="world_to_table_top" type="fixed">
+    <origin xyz="0 0 0.73" rpy="0 0 0"/>
+    <parent link="world"/>
+    <child link="table_top"/>
+  </joint>
+
+  <xacro:macro name="table_leg" params="name x y">
+    <link name="table_leg_${name}">
+      <visual>
+        <origin xyz="0 0 0"/>
+        <geometry>
+          <box size="0.06 0.06 0.71"/>
+        </geometry>
+        <material name="table_leg_grey">
+          <color rgba="0.42 0.42 0.45 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0"/>
+        <geometry>
+          <box size="0.06 0.06 0.71"/>
+        </geometry>
+      </collision>
+    </link>
+    <joint name="table_leg_${name}_joint" type="fixed">
+      <origin xyz="${x} ${y} -0.375" rpy="0 0 0"/>
+      <parent link="table_top"/>
+      <child link="table_leg_${name}"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:table_leg name="fl" x="-0.54" y="-0.83"/>
+  <xacro:table_leg name="fr" x="0.54" y="-0.83"/>
+  <xacro:table_leg name="rl" x="-0.54" y="0.83"/>
+  <xacro:table_leg name="rr" x="0.54" y="0.83"/>
+
+</robot>

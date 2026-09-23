@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>fr_robot_driver</name>
+  <version>1.0.0</version>
+  <description>
+    ros2_control bringup for Fairino collaborative robots (mock hardware first,
+    real hardware plugin to follow). One controller_manager per robot via
+    namespace + tf_prefix, enabling multi-robot cells.
+  </description>
+  <maintainer email="fr@todo.todo">fairino_ros2_driver maintainers</maintainer>
+  <license>AGPL-3.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>controller_manager</depend>
+  <depend>fr_description</depend>
+  <depend>xacro</depend>
+
+  <!-- mock_components/GenericSystem is provided by the ros2_control package;
+       hardware_interface defines the plugin base classes. Both must be
+       installed for mock hardware to load. -->
+  <exec_depend>hardware_interface</exec_depend>
+  <exec_depend>ros2_control</exec_depend>
+
+  <exec_depend>joint_state_broadcaster</exec_depend>
+  <exec_depend>joint_trajectory_controller</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <!-- Workaround: re-export the mock_components plugin description (see the
+         file header) so pluginlib can discover mock_components/GenericSystem -->
+    <hardware_interface plugin="${prefix}/mock_components_plugin_description.xml"/>
+  </export>
+</package>

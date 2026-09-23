@@ -1,0 +1,16 @@
+# Dual-robot workbench initial pose (see dual_fr_cell.launch.py).
+#
+# Both robots share this file: with the mirrored mounting each arm folds up
+# and turns toward its own table end, leaving 0.6 m clearance between the
+# chains (scripts/zero_pose_collision_check.py).
+#
+# The zero configuration and even the classic standalone ready pose
+# [0, -90, +90 deg] would interpenetrate on this workbench - the initial
+# configuration is part of the scene, not of the robot.
+initial_positions:
+  shoulder_pan_joint: 1.5708
+  shoulder_lift_joint: -1.5708
+  elbow_joint: 1.5708
+  wrist_1_joint: 0.0
+  wrist_2_joint: 0.0
+  wrist_3_joint: 0.0

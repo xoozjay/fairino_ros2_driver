@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="fr_robot">
+
+  <!--
+    fr_controlled.urdf.xacro: description + ros2_control in one document,
+    following the my_robot_cell_controlled.urdf.xacro pattern of the UR
+    tutorials. This is what the controller_manager consumes.
+
+    Arguments:
+      model                  : fr_description model (default fairino20_v6)
+      tf_prefix              : link/joint prefix (default "")
+      use_mock_hardware      : mock_components/GenericSystem (default true)
+      initial_positions_file : ros2_control initial positions
+  -->
+  <xacro:arg name="model" default="fairino20_v6"/>
+  <xacro:arg name="tf_prefix" default=""/>
+  <xacro:arg name="use_mock_hardware" default="true"/>
+  <xacro:arg name="initial_positions_file"
+             default="$(find fr_robot_driver)/config/initial_positions.yaml"/>
+
+  <xacro:include filename="$(find fr_description)/urdf/fr_macro.xacro"/>
+  <xacro:include filename="$(find fr_robot_driver)/urdf/fr_ros2_control.xacro"/>
+
+  <xacro:property name="tf_prefix" value="$(arg tf_prefix)"/>
+
+  <xacro:fr_robot
+      tf_prefix="${tf_prefix}"
+      kinematics_parameters_file="$(find fr_description)/config/$(arg model)/default_kinematics.yaml"
+      joint_limits_parameters_file="$(find fr_description)/config/$(arg model)/joint_limits.yaml"
+      physical_parameters_file="$(find fr_description)/config/$(arg model)/physical_parameters.yaml"
+      visual_parameters_file="$(find fr_description)/config/$(arg model)/visual_parameters.yaml"/>
+
+  <xacro:fr_ros2_control
+      tf_prefix="${tf_prefix}"
+      use_mock_hardware="$(arg use_mock_hardware)"
+      initial_positions_file="$(arg initial_positions_file)"/>
+
+</robot>

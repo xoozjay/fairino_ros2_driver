@@ -1,0 +1,15 @@
+<library path="mock_components">
+
+  <!-- Re-export of mock_components/GenericSystem: this distribution ships the
+       plugin description in hardware_interface's share directory but no
+       package.xml exports it, so pluginlib cannot discover the class and
+       controller_manager fails with "Wrong state or command interface
+       configuration". Registering it here makes mock hardware work again.
+       Upstream, this export belongs to the ros2_control package. -->
+  <class name="mock_components/GenericSystem" type="mock_components::GenericSystem" base_class_type="hardware_interface::SystemInterface">
+    <description>
+      Generic components for simple mocking of system hardware.
+    </description>
+  </class>
+
+</library>
