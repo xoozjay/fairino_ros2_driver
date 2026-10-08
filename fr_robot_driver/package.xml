@@ -17,9 +17,8 @@
   <depend>fr_description</depend>
   <depend>xacro</depend>
 
-  <!-- mock_components/GenericSystem is provided by the ros2_control package;
-       hardware_interface defines the plugin base classes. Both must be
-       installed for mock hardware to load. -->
+  <!-- mock_components/GenericSystem is provided and exported by hardware_interface/
+       ros2_control; both must be installed for mock hardware to load. -->
   <exec_depend>hardware_interface</exec_depend>
   <exec_depend>ros2_control</exec_depend>
 
@@ -34,8 +33,5 @@
 
   <export>
     <build_type>ament_cmake</build_type>
-    <!-- Workaround: re-export the mock_components plugin description (see the
-         file header) so pluginlib can discover mock_components/GenericSystem -->
-    <hardware_interface plugin="${prefix}/mock_components_plugin_description.xml"/>
   </export>
 </package>

@@ -30,7 +30,7 @@ include 宏并多次实例化，`tf_prefix` 区分（这正是替换 vendor URDF
 ## 修改后必须验证
 
 ```bash
-source /opt/ros/humble/setup.bash && source install/setup.bash   # 工作区根目录
+source /opt/ros/jazzy/setup.bash && source install/setup.bash   # 工作区根目录
 
 # 1) 单个型号（check_urdf 需要 文件参数，不支持管道）
 xacro src/fairino_ros2_driver/fr_description/urdf/fr.urdf.xacro \

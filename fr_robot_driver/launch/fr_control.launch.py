@@ -47,7 +47,7 @@ def launch_setup(context, *args, **kwargs):
     ])
 
     # Controllers: instantiate the template with this robot's tf_prefix and
-    # namespace (root keys must be the namespaced controller names, ros2_control 2.5x)
+    # namespace (root keys must be the namespaced controller names, ros2_control 4.x)
     controllers_file = os.path.join(pkg_share, 'config', 'controllers.yaml')
     ns_token = '/' + namespace if namespace else ''
     with open(controllers_file, 'r') as f:

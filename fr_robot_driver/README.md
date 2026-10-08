@@ -97,13 +97,12 @@ rviz/dual_cell.rviz                 工作台可视化配置
 scripts/zero_pose_collision_check.py 纯 FK 零位碰撞分析
 ```
 
-## 踩坑记录（本环境 ros2_control 2.54.2，源码在 `references/ros2_control`）
+## 踩坑记录（本环境 Jazzy / ros2_control 4.48.1，源码在 `references/ros2_control`）
 
 - `<ros2_control type=...>` 必须小写 `"system"`：大小写比较敏感，写错会静默
   跳过组件并报误导性的 "Wrong state or command interface configuration"
 - 初始值参数键是 `initial_value`（旧键 `initial_position` 被静默忽略）
-- 该发行版未导出 `mock_components_plugin_description.xml`：本包通过
-  package.xml `<hardware_interface plugin=.../>` 再注册（见
-  `mock_components_plugin_description.xml` 文件头注释）
+- Humble 时代需要自行再注册 mock 插件 XML；Jazzy 已由 ros2_control 正常导出，
+  该 workaround 已随迁移删除
 - 新版 spawner 的 `--param-file` 要求根键为**带命名空间的控制器全名**，
   且控制器必须声明插件 `type`

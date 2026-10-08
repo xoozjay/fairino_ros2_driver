@@ -13,9 +13,4 @@ install(
   DESTINATION lib/${PROJECT_NAME}
 )
 
-install(
-  FILES mock_components_plugin_description.xml
-  DESTINATION share/${PROJECT_NAME}
-)
-
 ament_package()

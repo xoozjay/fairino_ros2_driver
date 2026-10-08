@@ -5,7 +5,7 @@
 #                             robots can share one TF tree)
 #   __NS__     -> "" or "/<namespace>"
 #
-# Format follows the ros2_control 2.5x spawner: the root key must be the
+# Format follows the ros2_control 4.x spawner: the root key must be the
 # namespaced controller name and each controller must declare its plugin
 # `type` (see references/ros2_control/controller_manager/controller_manager/
 # controller_manager_services.py).

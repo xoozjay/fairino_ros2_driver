@@ -32,7 +32,7 @@
 - 初始位形是**场景属性**：单机用 `config/initial_positions.yaml`，
   多机单元必须传入场景专属初始位形（如 `workbench_initial_positions.yaml`），
   修改布局后用 `zero_pose_collision_check.py` 复核；
-- 本环境 ros2_control 为 2.54.2（源码在 `references/ros2_control`），
+- 本环境为 ROS 2 Jazzy，ros2_control 为 4.48.1（源码在 `references/ros2_control`），
   遵循其新约定：`<ros2_control type="system">` 小写、`initial_value` 键、
   spawner 参数文件根键带命名空间且必须声明 `type`（详见包内 README 踩坑记录）；
 - 验证命令：launch 后 `ros2 control list_controllers` 应为 active，
@@ -41,8 +41,8 @@
 
 ### 参考：`references/` 还有两份重要基线
 
-- `references/ros2_control/` — 本环境安装的 ros2_control 2.54.2 源码
-  （行为与老版 Humble 差异较大，遇疑难报错先查它）
+- `references/ros2_control/` — 本环境安装的 ros2_control 4.48.1 源码（Jazzy，
+  tag `4.48.1`），遇疑难报错先查它
 - `references/Universal_Robots_ROS2_Tutorials/` — 架构范本
 
 ## 相关文档
