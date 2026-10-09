@@ -197,6 +197,76 @@ TEST(HardwareInterface, UnverifiedSoftwareVersionIsRefusedUnlessAllowed)
   }
 }
 
+// ---- robot model and flange (forward kinematics) checks ----
+
+TEST(HardwareInterface, AControllerOfAnotherModelIsRefused)
+{
+  Rig r;                                     // the URDF is for fairino5_v6
+  r.fake.setModel("FR20-V1-001(V6.0)");      // a known model, but not this one
+  EXPECT_FALSE(r.configure());
+  EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_UNCONFIGURED);
+  EXPECT_EQ(r.fake.count("SetRobotRealtimeStateSamplePeriod"), 0);   // refused before touching anything
+}
+
+TEST(HardwareInterface, AnUnknownModelNeedsExplicitPermission)
+{
+  {
+    Rig r;
+    r.fake.setModel("FR5-V1-001(V5.0)");     // the V5.0 generation: no kinematics for it here
+    EXPECT_FALSE(r.configure());
+  }
+  {
+    Rig r("<param name=\"allow_unknown_model\">true</param>");
+    r.fake.setModel("FR5-V1-001(V5.0)");
+    EXPECT_TRUE(r.configure());              // the flange check still guards it
+  }
+  {
+    Rig r("<param name=\"allow_unknown_model\">true</param>");
+    r.fake.setModel("FR5-V1-001(V5.0)");
+    r.fake.flange_error_mm = 80;
+    EXPECT_FALSE(r.configure());             // allowed to be unknown, not allowed to disagree
+  }
+}
+
+TEST(HardwareInterface, AFlangePoseThatDisagreesWithTheKinematicsIsRefused)
+{
+  {
+    Rig r;
+    r.fake.flange_error_mm = 50;             // e.g. wrong zero offsets or installation
+    EXPECT_FALSE(r.configure());
+    EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_UNCONFIGURED);
+  }
+  {
+    Rig r;
+    r.fake.flange_error_mm = 9;              // inside the default 10 mm
+    EXPECT_TRUE(r.configure());
+  }
+  {
+    Rig r("<param name=\"fk_check\">false</param>");
+    r.fake.flange_error_mm = 500;
+    EXPECT_TRUE(r.configure());              // can be switched off
+  }
+  {
+    Rig r("<param name=\"fk_position_tolerance_mm\">100</param>");
+    r.fake.flange_error_mm = 50;
+    EXPECT_TRUE(r.configure());              // or loosened
+  }
+}
+
+TEST(HardwareInterface, ActivationChecksTheFlangeAgain)
+{
+  Rig r;
+  ASSERT_TRUE(r.configure());
+  r.run(3);
+  r.fake.flange_error_mm = 50;               // e.g. the robot was re-installed meanwhile
+  r.run(3);
+  EXPECT_FALSE(r.activate());
+  EXPECT_EQ(r.fake.count("ServoMoveStart"), 0);
+  r.fake.flange_error_mm = 0;
+  r.run(3);
+  EXPECT_TRUE(r.activate());
+}
+
 TEST(HardwareInterface, ActivationIsRefusedWhileAFaultIsPresent)
 {
   const std::vector<std::pair<const char *, std::function<void(fr_client_library::RobotState384 &)>>> cases = {

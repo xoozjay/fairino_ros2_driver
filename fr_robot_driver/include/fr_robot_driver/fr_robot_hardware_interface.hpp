@@ -16,8 +16,10 @@
 #include "fr_client_library/fault_state.hpp"
 #include "fr_client_library/instant_command.hpp"
 #include "fr_client_library/robot_api.hpp"
+#include "fr_client_library/robot_model.hpp"
 #include "fr_client_library/servo_sender.hpp"
 #include "fr_client_library/state_receiver.hpp"
+#include "fr_robot_driver/kinematics.hpp"
 #include "hardware_interface/system_interface.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "std_srvs/srv/trigger.hpp"
@@ -49,6 +51,9 @@ private:
   void publishStatus(const fr_client_library::RobotState384 & s, fr_client_library::FaultClass fc);
   void publishJoints(const fr_client_library::RobotState384 & s);
   void logFault(fr_client_library::FaultClass fc, const std::string & detail);
+  // Does the state frame's flange_cur_pos agree with our FK of its jt_cur_pos? Wrong robot model,
+  // wrong zero offsets or sign conventions show up here (docs/fault_handling.md section 8).
+  bool flangeConsistent(const fr_client_library::RobotState384 & s, std::string & why) const;
   void closeConnections();
   // on_deactivate/on_error run inside ResourceManager::write()/read(), i.e. on the realtime thread:
   // they must not block, so the network part of shutting down happens on this short-lived thread.
@@ -69,6 +74,12 @@ private:
   int comm_timeout_periods_ = 3;
   int ratio_ = 1;                 // controller cycles per ServoJ segment
   bool allow_unverified_version_ = false;
+  std::string model_;             // fr_description model this URDF was built for
+  bool allow_unknown_model_ = false;
+  bool fk_check_ = true;
+  double fk_position_tolerance_mm_ = 10.0;
+  double fk_angle_tolerance_deg_ = 1.0;
+  Kinematics kinematics_;
   std::string status_prefix_;     // "<tf_prefix>fr_status/"
   std::vector<std::string> joint_names_;
   std::vector<double> max_step_deg_;  // per joint, per segment: URDF velocity limit * cmdT

@@ -42,6 +42,10 @@ def launch_setup(context, *args, **kwargs):
     prefill = LaunchConfiguration('prefill').perform(context)
     allow_unverified = LaunchConfiguration('allow_unverified_version').perform(context)
     mock_gpio_commands = LaunchConfiguration('mock_gpio_commands').perform(context)
+    allow_unknown_model = LaunchConfiguration('allow_unknown_model').perform(context)
+    fk_check = LaunchConfiguration('fk_check').perform(context)
+    fk_position_tolerance_mm = LaunchConfiguration('fk_position_tolerance_mm').perform(context)
+    fk_angle_tolerance_deg = LaunchConfiguration('fk_angle_tolerance_deg').perform(context)
     activate_hardware = LaunchConfiguration('activate_hardware').perform(context).lower() in ('true', '1')
     mock = use_mock_hardware.lower() in ('true', '1')
     # Real hardware: one ServoJ segment of cmdT per controller cycle (docs/sdk_quirks.md S1).
@@ -62,6 +66,10 @@ def launch_setup(context, *args, **kwargs):
         ' update_rate_hz:=', str(real_update_rate),
         ' namespace:=', namespace if namespace else "''",
         ' allow_unverified_version:=', allow_unverified,
+        ' allow_unknown_model:=', allow_unknown_model,
+        ' fk_check:=', fk_check,
+        ' fk_position_tolerance_mm:=', fk_position_tolerance_mm,
+        ' fk_angle_tolerance_deg:=', fk_angle_tolerance_deg,
     ])
 
     # Controllers: instantiate the template with this robot's tf_prefix and
@@ -193,6 +201,12 @@ def generate_launch_description():
         DeclareLaunchArgument('prefill', default_value='3',
                               description='standing ServoJ segments at activation (jitter buffer)'),
         DeclareLaunchArgument('allow_unverified_version', default_value='false'),
+        DeclareLaunchArgument('allow_unknown_model', default_value='false',
+                              description='run with a controller model that has no kinematics here'),
+        DeclareLaunchArgument('fk_check', default_value='true',
+                              description='cross-check flange_cur_pos against our forward kinematics'),
+        DeclareLaunchArgument('fk_position_tolerance_mm', default_value='10.0'),
+        DeclareLaunchArgument('fk_angle_tolerance_deg', default_value='1.0'),
         DeclareLaunchArgument('activate_hardware', default_value='true',
                               description='real hardware: activate the component after startup '
                                           '(false: leave it inactive, e.g. to reset a fault first)'),

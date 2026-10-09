@@ -153,8 +153,19 @@ configure → activate。
 | 负载 `SetLoadWeight` / `SetLoadCoord` | 碰撞检测、动力学补偿；错了会误报碰撞或漏检 | configure 时按参数写入并回读 |
 | 工具 `SetToolCoord` | TCP 限速、安全平面、示教器显示 | 与 `tool0 → TCP` 一致 |
 
-一致性检查：状态帧 `flange_cur_pos`（112，6×double；仿真器实测值形如 `[-497, -102, 477, 180, 0, 90]`，
-推测 mm/deg ❓）与我们对 `jt_cur_pos` 的 FK 比较，可发现基座/零位约定错误、型号选错、标定偏差。
+**型号检查与法兰一致性检查（configure 时做，activate 时法兰检查再做一次）**：
+
+- **型号**：`GetSoftwareVersion` 返回的型号字符串（如 `FR5-V1-002(V6.0)`）按官方手册的型号表映射到 `fr_description`
+  机型（`fr_client_library/robot_model.hpp`），必须和 URDF 所用机型（`model` 参数）一致，否则 configure 失败。
+  表里没有的型号（V4.0/V5.0 代、Mirror、ART、FR10YD、FR3-C）视为未知，`allow_unknown_model` 才放行
+- **法兰**：状态帧 `flange_cur_pos` 与我们对同一帧 `jt_cur_pos` 的 FK（`fr_robot_driver/kinematics.hpp`，参数来自
+  `default_kinematics.yaml`）比较，位置默认 ≤ 10 mm、姿态 ≤ 1°（姿态按旋转矩阵比较，不受欧拉角 ±180°、
+  奇异点歧义影响）。能发现型号选错、关节零位/正负号约定错误、安装方式不同
+- **约定（仿真器 6 个位形实测，FK 与 `flange_cur_pos` 位置差 ≤ 0.25 mm、姿态差 ≤ 0.1°）**：`flange_cur_pos`
+  单位 **mm / deg**，基坐标系就是 URDF 的 `base_link`（无额外旋转），姿态 `R = Rz(rz)·Ry(ry)·Rx(rx)`，
+  法兰 = `wrist_3` 坐标系沿 z 偏移 `flange_offset`
+- 容差故意放宽：只用来发现粗大错误。真机可能有标定补偿，需实测后收紧 ❓；非正装（侧装/倒装）时基坐标系的
+  表示是否变化 ❓
 
 ## 九、待验证（❓ 汇总）
 
@@ -165,4 +176,4 @@ configure → activate。
 - [ ] 急停下插件的行为（仿真器无法注入急停：只有假控制器测试覆盖；`reset_error` 拒绝、硬件 → inactive）
 - [ ] `comm_timeout_periods`（默认 3 个状态周期 = 24 ms）在真机网络上是否会误报 COMM
 - [ ] 真机上的队列行为：255 条满时 `ServoJ` 是否同样阻塞、`mc_queue_len` 是否同样反映占用、`STOP` 是否同样清空队列（S16）
-- [ ] `flange_cur_pos` 单位与基坐标系约定
+- [ ] 真机上 FK 与 `flange_cur_pos` 的实际偏差（标定补偿）、非正装时的基坐标系，据此收紧容差

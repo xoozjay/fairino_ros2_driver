@@ -33,6 +33,12 @@
                                    must be an integer >= 1 (default 1000 / cmd_t_ms)
       namespace                  : namespace of the reset_error service node
       allow_unverified_version   : run against a software version that is not whitelisted (default false)
+      model                      : fr_description model this URDF was built for (fairino5_v6, ...); the
+                                   controller's model string must match it, or configure fails
+      kinematics_parameters_file : that model's default_kinematics.yaml; the plugin cross-checks the
+                                   state frame's flange_cur_pos against its own FK of the joint angles
+      allow_unknown_model, fk_check, fk_position_tolerance_mm, fk_angle_tolerance_deg:
+                                   tuning of the two checks, see fr_robot_driver/README.md
   -->
   <!-- Internal helper: one ros2_control joint (name prefixed like the URDF joints).
        Initial values use the "initial_value" key (ros2_control 4.x). -->
@@ -78,6 +84,12 @@
       update_rate_hz:=125
       namespace:=''
       allow_unverified_version:='false'
+      model:=''
+      kinematics_parameters_file:=''
+      allow_unknown_model:='false'
+      fk_check:='true'
+      fk_position_tolerance_mm:=10.0
+      fk_angle_tolerance_deg:=1.0
       initial_positions_file">
 
     <xacro:property name="initial_positions"
@@ -100,6 +112,15 @@
           <param name="update_rate_hz">${update_rate_hz}</param>
           <param name="namespace">${namespace}</param>
           <param name="allow_unverified_version">${allow_unverified_version}</param>
+          <param name="model">${model}</param>
+          <param name="allow_unknown_model">${allow_unknown_model}</param>
+          <param name="fk_check">${fk_check}</param>
+          <param name="fk_position_tolerance_mm">${fk_position_tolerance_mm}</param>
+          <param name="fk_angle_tolerance_deg">${fk_angle_tolerance_deg}</param>
+          <!-- joint origins "x y z r p y" per joint, in joint order, plus the flange offset -->
+          <xacro:property name="kin" value="${xacro.load_yaml(kinematics_parameters_file)}"/>
+          <param name="kinematics">${';'.join([kin['kinematics'][j]['xyz'] + ' ' + kin['kinematics'][j]['rpy'] for j in ['shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint', 'wrist_1_joint', 'wrist_2_joint', 'wrist_3_joint']])}</param>
+          <param name="flange_offset">${kin['flange_offset']}</param>
         </xacro:unless>
       </hardware>
 

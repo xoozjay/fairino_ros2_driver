@@ -16,6 +16,7 @@ using fr_client_library::InstantCommand;
 using fr_client_library::InstantStatus;
 using fr_client_library::RobotState384;
 using fr_client_library::StateSnapshot;
+using fr_robot_driver::FlangeMismatch;
 using hardware_interface::return_type;
 using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
 
@@ -123,6 +124,16 @@ CallbackReturn FrRobotHardwareInterface::on_init(
       ok = false;
       return fallback;
     };
+  const auto number = [&](const char * key, double fallback, double lo, double hi) {
+      try {
+        const double v = std::stod(param(key, std::to_string(fallback)));
+        if (v >= lo && v <= hi) {return v;}
+      } catch (const std::exception &) {
+      }
+      RCLCPP_ERROR(log, "parameter '%s' must be a number in [%g, %g]", key, lo, hi);
+      ok = false;
+      return fallback;
+    };
   ip_ = param("ip", "192.168.58.2");
   xmlrpc_port_ = static_cast<uint16_t>(integer("xmlrpc_port", 20003, 1, 65535));
   state_port_ = static_cast<uint16_t>(integer("state_port", 20004, 1, 65535));
@@ -133,6 +144,26 @@ CallbackReturn FrRobotHardwareInterface::on_init(
   comm_timeout_periods_ = integer("comm_timeout_periods", 3, 1, 1000);
   const int update_rate = integer("update_rate_hz", 1000 / std::max(1, cmd_t_ms_), 1, 1000);
   allow_unverified_version_ = hardware_interface::parse_bool(param("allow_unverified_version", "false"));
+  model_ = param("model", "");
+  allow_unknown_model_ = hardware_interface::parse_bool(param("allow_unknown_model", "false"));
+  fk_check_ = hardware_interface::parse_bool(param("fk_check", "true"));
+  fk_position_tolerance_mm_ = number("fk_position_tolerance_mm", 10.0, 0.01, 1000.0);
+  fk_angle_tolerance_deg_ = number("fk_angle_tolerance_deg", 1.0, 0.001, 180.0);
+  if (model_.empty()) {
+    RCLCPP_ERROR(log, "parameter 'model' (the fr_description model, e.g. fairino5_v6) is required");
+    ok = false;
+  }
+  if (fk_check_) {
+    const double flange = number("flange_offset", -1.0, 0.0, 1.0);
+    const auto k = parseKinematics(param("kinematics", ""), flange);
+    if (!k) {
+      RCLCPP_ERROR(log, "parameters 'kinematics' (six \"x y z r p y\" joint origins) and "
+        "'flange_offset' are required for the flange check (fk_check)");
+      ok = false;
+    } else {
+      kinematics_ = *k;
+    }
+  }
   if (!ok) {
     return CallbackReturn::ERROR;
   }
@@ -239,6 +270,23 @@ CallbackReturn FrRobotHardwareInterface::on_configure(const rclcpp_lifecycle::St
         return CallbackReturn::FAILURE;
       }
 
+      // Which robot is it? The URDF (limits, kinematics) was built for model_.
+      if (const char * described = fr_client_library::descriptionModelFor(info.value.robot_model)) {
+        if (model_ != described) {
+          RCLCPP_ERROR(log, "the controller is a %s (%s) but this URDF was built for %s",
+            info.value.robot_model.c_str(), described, model_.c_str());
+          return CallbackReturn::FAILURE;
+        }
+      } else if (!allow_unknown_model_) {
+        RCLCPP_ERROR(log, "controller model '%s' is not one this driver has kinematics for "
+          "(allow_unknown_model:=true to run anyway; the flange check still applies)",
+          info.value.robot_model.c_str());
+        return CallbackReturn::FAILURE;
+      } else {
+        RCLCPP_WARN(log, "controller model '%s' is unknown, assuming %s",
+          info.value.robot_model.c_str(), model_.c_str());
+      }
+
       // state period: set and read back (the controller refuses < 8 ms)
       auto period = api_->getRealtimeStateSamplePeriod();
       if (!period.ok() || period.value != state_period_ms_) {
@@ -261,6 +309,15 @@ CallbackReturn FrRobotHardwareInterface::on_configure(const rclcpp_lifecycle::St
       return CallbackReturn::FAILURE;
     }
     comm_timeout_ = std::chrono::milliseconds(state_period_ms_ * comm_timeout_periods_);
+    {
+      StateSnapshot first;
+      std::string why;
+      if (!receiver_->latest(first) || !flangeConsistent(first.state, why)) {
+        RCLCPP_ERROR(log, "flange check failed: %s", why.c_str());
+        closeConnections();
+        return CallbackReturn::FAILURE;
+      }
+    }
 
     // 8080 has room for one client only: this driver must be its sole user (sdk_quirks L8)
     if (!instant_->connect()) {
@@ -297,6 +354,11 @@ CallbackReturn FrRobotHardwareInterface::on_activate(const rclcpp_lifecycle::Sta
   if (const FaultClass fc = fr_client_library::classifyState(snap.state); fc != FaultClass::None) {
     RCLCPP_ERROR(log, "cannot activate: %s (%s)", fr_client_library::toString(fc),
       fr_client_library::describeFault(snap.state).c_str());
+    return CallbackReturn::FAILURE;
+  }
+
+  if (std::string why; !flangeConsistent(snap.state, why)) {
+    RCLCPP_ERROR(log, "cannot activate: flange check failed: %s", why.c_str());
     return CallbackReturn::FAILURE;
   }
 
@@ -354,6 +416,31 @@ CallbackReturn FrRobotHardwareInterface::on_error(const rclcpp_lifecycle::State 
   sender_->halt();
   startCleanup(false, true);
   return CallbackReturn::SUCCESS;  // -> UNCONFIGURED
+}
+
+bool FrRobotHardwareInterface::flangeConsistent(const RobotState384 & s, std::string & why) const
+{
+  if (!fk_check_) {
+    return true;
+  }
+  std::array<double, 6> q;
+  double flange[6];  // copies: the frame is packed
+  for (int i = 0; i < 6; ++i) {
+    q[i] = s.jt_cur_pos[i];
+    flange[i] = s.flange_cur_pos[i];
+  }
+  const FlangeMismatch m = compareFlange(kinematics_, q, flange);
+  if (m.position_mm <= fk_position_tolerance_mm_ && m.angle_deg <= fk_angle_tolerance_deg_) {
+    RCLCPP_INFO(get_logger(), "flange check: %.3f mm / %.4f deg from FK (limits %.3f mm / %.3f deg)",
+      m.position_mm, m.angle_deg, fk_position_tolerance_mm_, fk_angle_tolerance_deg_);
+    return true;
+  }
+  why = "the controller's flange pose is " + std::to_string(m.position_mm) + " mm / " +
+    std::to_string(m.angle_deg) + " deg away from the forward kinematics of " + model_ +
+    " (limits " + std::to_string(fk_position_tolerance_mm_) + " mm / " +
+    std::to_string(fk_angle_tolerance_deg_) + " deg): wrong robot model, joint zero offsets or "
+    "installation? (fk_check:=false to disable)";
+  return false;
 }
 
 void FrRobotHardwareInterface::startCleanup(bool send_stop, bool close_all)

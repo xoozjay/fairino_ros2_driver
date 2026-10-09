@@ -12,6 +12,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <functional>
 #include <mutex>
@@ -20,6 +21,7 @@
 #include <vector>
 
 #include "fr_client_library/robot_state_384.hpp"
+#include "fr_robot_driver/kinematics.hpp"
 
 namespace fr_test
 {
@@ -113,6 +115,9 @@ public:
     f(st_);
   }
   void setVersion(const std::string & v) {std::lock_guard<std::mutex> l(m_); version_ = v;}
+  void setModel(const std::string & m) {std::lock_guard<std::mutex> l(m_); model_ = m;}
+  // The reported flange pose is the FR5's FK of the joint angles, plus this error on x [mm].
+  std::atomic<double> flange_error_mm{0.0};
   std::atomic<bool> silent{false};        // keep the connection, stop sending frames
   std::atomic<bool> drop_state{false};    // close the state connection
 
@@ -174,7 +179,7 @@ private:
     std::lock_guard<std::mutex> l(m_);
     methods_.push_back(method);
     if (method == "GetSoftwareVersion") {
-      return array(i4(0) + str("FR5-V1-002(V6.0)") + str(version_) + str("V3.8.8-LA"));
+      return array(i4(0) + str(model_) + str(version_) + str("V3.8.8-LA"));
     }
     if (method == "GetRobotRealtimeStateSamplePeriod") {
       return array(i4(0) + i4(period_));
@@ -216,6 +221,7 @@ private:
           std::lock_guard<std::mutex> l(m_);
           s = st_;
         }
+        setFlange(s);
         char frame[fr_client_library::kRobotState384Size] = {};
         s.frame_head = 0x5A5A;
         s.frame_cnt = cnt++;
@@ -228,6 +234,23 @@ private:
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(8));
     }
+  }
+
+  // flange_cur_pos as the controller reports it: mm and deg, URDF rpy, base_link frame
+  void setFlange(fr_client_library::RobotState384 & s) const
+  {
+    static const auto kin = fr_robot_driver::parseKinematics(
+      "0 0 0 0 0 0; 0 0 0.152 1.5708 0 0; -0.425 0 0 0 0 0; -0.39501 0 0 0 0 0; "
+      "0 0 0.1021 1.5708 0 0; 0 0 0.102 -1.5708 0 0", 0.1);
+    std::array<double, 6> q;
+    for (int i = 0; i < 6; ++i) {q[i] = s.jt_cur_pos[i];}
+    const auto f = fr_robot_driver::flangePose(*kin, q);
+    const double pitch = -std::asin(std::fmax(-1.0, std::fmin(1.0, f.R[2][0])));
+    const double roll = std::atan2(f.R[2][1], f.R[2][2]);
+    const double yaw = std::atan2(f.R[1][0], f.R[0][0]);
+    const double v[6] = {f.p[0] * 1000.0 + flange_error_mm.load(), f.p[1] * 1000.0, f.p[2] * 1000.0,
+      roll * 180.0 / M_PI, pitch * 180.0 / M_PI, yaw * 180.0 / M_PI};
+    for (int i = 0; i < 6; ++i) {s.flange_cur_pos[i] = v[i];}
   }
 
   void serveInstant(int fd, const std::atomic<bool> & stop)
@@ -253,6 +276,7 @@ private:
   mutable std::mutex m_;
   fr_client_library::RobotState384 st_{};
   std::string version_ = "v3.8.4.2";
+  std::string model_ = "FR5-V1-002(V6.0)";
   int period_ = 8;
   std::vector<std::array<double, 6>> servoj_;
   std::vector<std::string> methods_;

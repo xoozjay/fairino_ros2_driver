@@ -11,7 +11,8 @@
       tf_prefix              : link/joint prefix (default "")
       use_mock_hardware      : mock_components/GenericSystem (default true)
       initial_positions_file : ros2_control initial positions
-      ip, cmd_t_ms, prefill, update_rate_hz, namespace, allow_unverified_version:
+      ip, cmd_t_ms, prefill, update_rate_hz, namespace, allow_unverified_version,
+      allow_unknown_model, fk_check, fk_position_tolerance_mm, fk_angle_tolerance_deg:
                              real hardware only, see fr_ros2_control.xacro
       mock_gpio_commands     : mock only, loop-back command interfaces on fr_status
   -->
@@ -27,6 +28,10 @@
   <xacro:arg name="update_rate_hz" default="125"/>
   <xacro:arg name="namespace" default=""/>
   <xacro:arg name="allow_unverified_version" default="false"/>
+  <xacro:arg name="allow_unknown_model" default="false"/>
+  <xacro:arg name="fk_check" default="true"/>
+  <xacro:arg name="fk_position_tolerance_mm" default="10.0"/>
+  <xacro:arg name="fk_angle_tolerance_deg" default="1.0"/>
 
   <xacro:include filename="$(find fr_description)/urdf/fr_macro.xacro"/>
   <xacro:include filename="$(find fr_robot_driver)/urdf/fr_ros2_control.xacro"/>
@@ -50,6 +55,12 @@
       update_rate_hz="$(arg update_rate_hz)"
       namespace="$(arg namespace)"
       allow_unverified_version="$(arg allow_unverified_version)"
+      model="$(arg model)"
+      kinematics_parameters_file="$(find fr_description)/config/$(arg model)/default_kinematics.yaml"
+      allow_unknown_model="$(arg allow_unknown_model)"
+      fk_check="$(arg fk_check)"
+      fk_position_tolerance_mm="$(arg fk_position_tolerance_mm)"
+      fk_angle_tolerance_deg="$(arg fk_angle_tolerance_deg)"
       initial_positions_file="$(arg initial_positions_file)"/>
 
 </robot>

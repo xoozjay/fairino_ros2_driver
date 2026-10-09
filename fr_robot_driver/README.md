@@ -23,6 +23,11 @@ ros2 launch fr_robot_driver dual_fr_cell.launch.py use_mock_hardware:=false \
   alice_ip:=<ip> bob_ip:=<ip>
 ```
 
+**机型必须和控制器一致**：launch 的 `model` 默认是 `fairino20_v6`，而仿真器是 FR5，所以要写 `model:=fairino5_v6`。
+插件在 configure 时核对控制器报告的型号，不一致就拒绝；再用 `flange_cur_pos` 与自家 FK 交叉检查（位置 ≤ 10 mm、
+姿态 ≤ 1°）。相关参数：`allow_unknown_model`（控制器型号不在表里时放行，法兰检查仍有效）、`fk_check`、
+`fk_position_tolerance_mm`、`fk_angle_tolerance_deg`。
+
 launch 参数：`ip`、`cmd_t_ms`（ServoJ 的 cmdT，整毫秒，默认 8）、`prefill`（启动时的原地不动段数，也是固件队列的目标深度，默认 3）、
 `allow_unverified_version`、`activate_hardware`（默认 true：启动后自动激活硬件）。
 

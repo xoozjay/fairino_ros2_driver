@@ -192,6 +192,8 @@ curl -s -H 'Content-Type: text/xml' http://192.168.58.2:20003/RPC2 --data \
 | R4 🔍 | 帧同步不会找 `0x5A5A` 重新对齐：一旦错位就持续出错 | 自研接收器按帧头搜索重同步 |
 | R5 🔍📋 | `frame_cnt` 是 `uint8_t`（256 回绕）；仿真器上**每帧递增 2**（5, 7, 9…） | 判断"新帧"用 `!=`，不要假设 +1，也不要比大小 |
 | R6 🔍 | 单位：`jt_cur_pos` 度，`jt_cur_tor` Nm；❓ `actual_qd` 推测为 deg/s 待确认 | 同 S7 |
+| R7 📋 | **`flange_cur_pos` 的约定（仿真器 6 个位形实测）**：mm 与 deg，在 URDF `base_link` 坐标系下，姿态 `R = Rz(rz)·Ry(ry)·Rx(rx)`，位置 = `fr_description` 的 FK（`wrist_3` 沿 z 偏 `flange_offset`）；与 FK 的差 ≤ 0.25 mm / 0.1°。`tl_cur_pos`（TCP）在未配置工具时与它相同 ❓真机 | 用于型号/零位一致性检查（fault_handling §八）；比较姿态用旋转矩阵，不用欧拉角 |
+| R8 📋 | **型号字符串**：`GetSoftwareVersion` 的第一个字符串，如 `FR5-V1-002(V6.0)`；完整型号表见官方手册 `CobotsManual/system.rst`（FR3/5/10/16/20/30 的 V5.0 与 V6.0 代、FR3-WML/WMS、FR5WM、FR3MT 等）。**只有 FR5 V6.0 在仿真器上验证过** | `robot_model.hpp` 映射到 `fr_description` 机型；V5.0 及更早、Mirror 等无对应运动学，视为未知 |
 
 ## 五、生命周期与线程
 

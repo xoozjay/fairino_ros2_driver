@@ -48,6 +48,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_reset_policy test/test_reset_policy.cpp)
   target_link_libraries(test_reset_policy fr_robot_hardware_interface)
 
+  ament_add_gtest(test_kinematics test/test_kinematics.cpp)
+  target_include_directories(test_kinematics PRIVATE include)
+
   # needs the installed plugin (pluginlib) and the installed xacro: run via colcon test
   ament_add_gtest(test_hardware_interface test/test_hardware_interface.cpp TIMEOUT 180
     SKIP_LINKING_MAIN_LIBRARIES)
