@@ -110,6 +110,10 @@ configure → activate。
 - controller_manager 打开 `enforce_command_limits: true`，限位与速度来自 `fr_description` 的 `joint_limits.yaml`
 - 插件内步长检查：单周期 `|Δq| > v_max · dt` 的命令**拒绝下发**并判 ROBOT_FAULT（防御控制器/规划层异常）
 - 固件负载、工具配置与实物一致，避免误报碰撞（见第七节）
+- **`ServoJ` 不受全局速度/加速度限制，只有固件最基本的角速度、电流与限位保护**（sdk_quirks S14）：`SetSpeed` 不能代替上面两条
+- **固件里最多排着 255 条运动指令**（S15）：停发 ServoJ 不会立刻停下，已入队的会走完（8 ms 周期下最长约 2 s）。
+  故障类（ROBOT_FAULT / ESTOP）由固件自己停；**非故障的主动停下（如 deactivate）应先发 `STOP`（8080）清空队列**，
+  再 `ServoMoveEnd`——仿真器上 `STOP` 约 100 ms 内停稳且队列归零（S16）；真机 ❓
 
 ## 七、状态上报（GPIO 状态接口）
 
@@ -121,6 +125,7 @@ configure → activate。
 | `estop`、`safety_stop0`、`safety_stop1`、`collision` | 对应字段 |
 | `main_code`、`sub_code` | 原样 |
 | `enabled`、`robot_mode`、`robot_state` | 对应字段 |
+| `servo_queue_len` | 状态帧 `mc_queue_len`（555）：固件运动队列占用；稳态应约 0–2，持续增长 = 发送快于消费（S16） |
 
 - 由 broadcaster 发布为话题，供上层 / HMI 使用
 - **mock 对等**：mock 分支声明同名接口，用 `mock_sensor_commands` 注入值来演练故障与恢复流程
@@ -142,5 +147,6 @@ configure → activate。
 - [ ] `rbtEnableState` 编码（仿真器使能时为 1）
 - [ ] `robot_mode` 手动/自动对 ServoJ 的影响
 - [ ] SI0/SI1 安全停止能否由 `ResetAllError` 清除
-- [ ] 伺服流中断（停发 ServoJ）时固件的行为（S4）
+- [ ] 伺服流中断（停发 ServoJ）时固件的行为（S4；仿真器见 S16）
+- [ ] 真机上的队列行为：255 条满时 `ServoJ` 是否同样阻塞、`mc_queue_len` 是否同样反映占用、`STOP` 是否同样清空队列（S16）
 - [ ] `flange_cur_pos` 单位与基坐标系约定
