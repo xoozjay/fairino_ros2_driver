@@ -5,10 +5,13 @@ find_package(ament_cmake REQUIRED)
 
 add_library(${PROJECT_NAME}
   src/frame_parser.cpp
+  src/http_connection.cpp
   src/instant_command.cpp
+  src/robot_api.cpp
   src/software_version.cpp
   src/state_receiver.cpp
-  src/tcp_socket.cpp)
+  src/tcp_socket.cpp
+  src/xmlrpc_codec.cpp)
 find_package(Threads REQUIRED)
 target_link_libraries(${PROJECT_NAME} PUBLIC Threads::Threads)
 target_include_directories(${PROJECT_NAME} PUBLIC
@@ -18,6 +21,11 @@ target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
 set_target_properties(${PROJECT_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+add_executable(fr_probe src/fr_probe.cpp)
+target_link_libraries(fr_probe ${PROJECT_NAME})
+target_compile_options(fr_probe PRIVATE -Wall -Wextra -Wpedantic)
+install(TARGETS fr_probe DESTINATION lib/${PROJECT_NAME})
+
 install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME})
 install(TARGETS ${PROJECT_NAME} EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
@@ -26,7 +34,8 @@ install(TARGETS ${PROJECT_NAME} EXPORT export_${PROJECT_NAME}
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
-  foreach(t robot_state software_version frame_parser state_receiver instant_command)
+  foreach(t robot_state software_version frame_parser state_receiver instant_command
+      xmlrpc_codec http_connection robot_api)
     ament_add_gtest(test_${t} test/test_${t}.cpp)
     target_link_libraries(test_${t} ${PROJECT_NAME})
   endforeach()
