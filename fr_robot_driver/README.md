@@ -3,13 +3,60 @@
 ros2_control bringup for Fairino 协作机器人，对标 `ur_robot_driver`（见
 `references/Universal_Robots_ROS2_Tutorials` 的 `my_robot_cell_control` 模式）。
 
-## 渐进式开发
+## 两条管线
 
-1. **当前阶段（mock）**：`use_mock_hardware:=true`（默认），使用
-   `mock_components/GenericSystem`。控制器管线完整可用：
-   `joint_state_broadcaster` + `joint_trajectory_controller`，端到端可验证。
-2. **下一阶段（真机）**：`use_mock_hardware:=false` 切换到
-   `fr_robot_driver/FrRobotHardwareInterface`（占位中，插件待实现）。
+1. **mock**：`use_mock_hardware:=true`（默认），`mock_components/GenericSystem`。
+   `joint_state_broadcaster` + `joint_trajectory_controller` 完整可用。
+2. **真机 / 仿真器**：`use_mock_hardware:=false`，`fr_robot_driver/FrRobotHardwareInterface`
+   （C++ 插件，依赖 `fr_client_library`，软件版本 3.8.4；3.8.3 仿真器已验证）。
+   两条管线暴露**同样的** `fr_status` 状态接口，上层不必区分。
+
+### 真机 / 仿真器
+
+```bash
+# 仿真器（SimMachine 3.8.3）或真机；控制器管理器按 1000/cmd_t_ms Hz 运行（默认 125 Hz）
+ros2 launch fr_robot_driver fr_control.launch.py model:=fairino5_v6 use_mock_hardware:=false \
+  ip:=192.168.58.2
+
+# 双机：两台控制器地址必须显式给出
+ros2 launch fr_robot_driver dual_fr_cell.launch.py use_mock_hardware:=false \
+  alice_ip:=<ip> bob_ip:=<ip>
+```
+
+launch 参数：`ip`、`cmd_t_ms`（ServoJ 的 cmdT，整毫秒，默认 8）、`prefill`（启动时的原地不动段数，也是固件队列的目标深度，默认 3）、
+`allow_unverified_version`、`activate_hardware`（默认 true：启动后自动激活硬件）。
+
+**启动顺序**：真机分支让硬件先停在 `inactive`，launch 再显式激活，成功后才启动轨迹控制器。
+这样启动时若有急停/故障/未使能，激活失败只是一条错误日志，控制器管理器和 `reset_error` 服务仍然在线
+（若交给控制器管理器自己激活，ros2_control 会在失败时直接 `abort`）。
+
+### 故障与恢复（全部由操作者发起，驱动绝不自动复位）
+
+| 现象 | 驱动做什么 | 恢复 |
+|---|---|---|
+| 固件故障 / 碰撞 / 安全停止 / 掉使能 | 立即停发，硬件 → `inactive`，`fr_status/fault_class = 1`，故障码原样导出 | 排除原因 → `reset_error` → 激活硬件 → 激活控制器 |
+| 命令超过单周期步长（URDF 速度限位 × cmdT） | 拒绝该命令（固件从未见到），同上，`main_code` 仍为 0 | 同上 |
+| 急停 | 同上，`fault_class = 2`；`reset_error` **拒绝** | 只能硬件重启控制器，之后重新 configure |
+| 通信中断（状态帧超时/连接断开/ServoJ 连接失败） | 硬件 → `unconfigured`，`fault_class = 3`；`reset_error` 拒绝 | 确认控制器在线后重新 configure → activate |
+
+```bash
+ros2 service call /<ns>/<tf_prefix>fr_robot_hw/reset_error std_srvs/srv/Trigger   # 例：/fr_robot_hw/reset_error
+ros2 control set_hardware_component_state <tf_prefix>fr_robot active
+ros2 control set_controller_state joint_trajectory_controller active
+```
+
+`fr_status` 接口（`<tf_prefix>fr_status/...`，经 `joint_state_broadcaster` 发布在 `dynamic_joint_states`）：
+`fault_class`、`estop`、`safety_stop0/1`、`collision`、`main_code`、`sub_code`、`enabled`、`robot_mode`、
+`robot_state`、`servo_queue_len`（固件 ServoJ 队列占用；时钟偏差补偿使它稳态在 `prefill` 到 `prefill + 1` 之间）。
+
+### 注意
+
+- **同一控制器上 20004 和 8080 都只服务一个客户端**：驱动运行时，`fr_probe`、`fr_servo_bench` 等工具收不到状态帧。
+- 控制器管理器的 `update_rate` 必须满足 `update_rate × cmd_t_ms / 1000` 为 ≥ 1 的整数，否则插件拒绝初始化；
+  更快的控制周期按整数倍抽取（500 Hz、8 ms → 每 4 个周期发 1 条）。
+- `ServoJ` 不受全局速度/加速度限制（sdk_quirks S14）：保护靠 URDF 限位、`enforce_command_limits`（真机分支默认开）
+  和插件的步长检查。
+- mock 分支加 `mock_gpio_commands:=true` 会给 `fr_status` 加回环命令接口，用来演练上层的故障处理。
 
 ## 用法
 
@@ -86,7 +133,9 @@ rviz2 -d $(ros2 pkg prefix fr_robot_driver)/share/fr_robot_driver/rviz/dual_cell
 
 ```
 urdf/fr_controlled.urdf.xacro       顶层：fr_description 宏 + fr_ros2_control 宏
-urdf/fr_ros2_control.xacro          <ros2_control> 生成宏（joint 名带 tf_prefix）
+urdf/fr_ros2_control.xacro          <ros2_control> 生成宏（joint 名带 tf_prefix；mock 与真机同名 fr_status）
+src/ include/ fr_robot_driver.xml   硬件插件 FrRobotHardwareInterface（+ reset_policy.hpp）
+test/                              插件状态机测试（假控制器 + ResourceManager）
 urdf/table_cell.urdf.xacro          工作台静态场景（world + 台面）
 config/controllers.yaml             控制器配置（令牌模板）
 config/initial_positions.yaml       单机初始位形

@@ -32,6 +32,11 @@ def launch_setup(context, *args, **kwargs):
     model = LaunchConfiguration('model').perform(context)
     use_mock_hardware = LaunchConfiguration('use_mock_hardware').perform(context)
     launch_rviz = LaunchConfiguration('launch_rviz').perform(context).lower() in ('true', '1')
+    alice_ip = LaunchConfiguration('alice_ip').perform(context)
+    bob_ip = LaunchConfiguration('bob_ip').perform(context)
+    if use_mock_hardware.lower() not in ('true', '1') and not (alice_ip and bob_ip):
+        # two controllers cannot share an address, and a guessed one could reach the wrong robot
+        raise RuntimeError('real hardware needs both addresses: alice_ip:=<ip> bob_ip:=<ip>')
 
     robot_args = {
         'model': model,
@@ -42,7 +47,7 @@ def launch_setup(context, *args, **kwargs):
         'use_world_tf': 'true',
     }
 
-    def robot(namespace, tf_prefix, xyz, quat):
+    def robot(namespace, tf_prefix, xyz, quat, ip):
         return IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(pkg_share, 'launch', 'fr_control.launch.py')),
@@ -50,14 +55,15 @@ def launch_setup(context, *args, **kwargs):
                 **robot_args,
                 'namespace': namespace,
                 'tf_prefix': tf_prefix,
+                'ip': ip or '192.168.58.2',   # only read by the real-hardware branch
                 'world_origin_xyz': xyz,
                 'world_origin_quat': quat,
             }.items(),
         )
 
     actions = [
-        robot('alice', 'alice_', '-0.4 0 0.75', '0 0 1 0'),  # yaw 180 deg
-        robot('bob', 'bob_', '0.4 0 0.75', '0 0 0 1'),       # yaw 0 deg
+        robot('alice', 'alice_', '-0.4 0 0.75', '0 0 1 0', alice_ip),  # yaw 180 deg
+        robot('bob', 'bob_', '0.4 0 0.75', '0 0 0 1', bob_ip),         # yaw 0 deg
 
         # Static workbench description (world + table), its own rsp
         Node(
@@ -88,5 +94,9 @@ def generate_launch_description():
         DeclareLaunchArgument('model', default_value='fairino5_v6'),
         DeclareLaunchArgument('use_mock_hardware', default_value='true'),
         DeclareLaunchArgument('launch_rviz', default_value='true'),
+        DeclareLaunchArgument('alice_ip', default_value='',
+                              description='real hardware: controller address of alice'),
+        DeclareLaunchArgument('bob_ip', default_value='',
+                              description='real hardware: controller address of bob'),
         OpaqueFunction(function=launch_setup),
     ])

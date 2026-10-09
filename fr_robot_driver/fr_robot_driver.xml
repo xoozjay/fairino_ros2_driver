@@ -1,0 +1,7 @@
+<library path="fr_robot_hardware_interface">
+  <class name="fr_robot_driver/FrRobotHardwareInterface"
+         type="fr_robot_driver::FrRobotHardwareInterface"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>ros2_control system interface for a Fairino robot (software version 3.8.4).</description>
+  </class>
+</library>

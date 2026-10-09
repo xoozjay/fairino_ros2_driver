@@ -22,8 +22,17 @@
       initial_positions_file  : YAML with initial_positions map (unprefixed joint names)
       mock_sensor_commands    : mock GPIO sensor commands (default false)
 
-    The real-hardware branch is a placeholder: the fr_robot_driver hardware
-    plugin will be filled in once the mock pipeline is validated end to end.
+    Both branches expose the same <gpio name="<tf_prefix>fr_status"> state interfaces
+    (docs/fault_handling.md section 7). With the mock, mock_gpio_commands:=true adds command
+    interfaces that loop back into them, to rehearse fault handling in upper layers.
+
+    Real hardware (fr_robot_driver/FrRobotHardwareInterface) parameters:
+      ip                         : controller address (default 192.168.58.2)
+      cmd_t_ms / prefill         : ServoJ cmdT in whole ms (default 8) / standing segments at start (3)
+      update_rate_hz             : controller_manager update rate; update_rate_hz * cmd_t_ms / 1000
+                                   must be an integer >= 1 (default 1000 / cmd_t_ms)
+      namespace                  : namespace of the reset_error service node
+      allow_unverified_version   : run against a software version that is not whitelisted (default false)
   -->
   <!-- Internal helper: one ros2_control joint (name prefixed like the URDF joints).
        Initial values use the "initial_value" key (ros2_control 4.x). -->
@@ -41,10 +50,34 @@
     </joint>
   </xacro:macro>
 
+  <!-- Internal helper: the fr_status gpio, identical for mock and real hardware. -->
+  <xacro:macro name="_fr_status_gpio" params="tf_prefix">
+    <gpio name="${tf_prefix}fr_status">
+      <state_interface name="fault_class"><param name="initial_value">0.0</param></state_interface>
+      <state_interface name="estop"><param name="initial_value">0.0</param></state_interface>
+      <state_interface name="safety_stop0"><param name="initial_value">0.0</param></state_interface>
+      <state_interface name="safety_stop1"><param name="initial_value">0.0</param></state_interface>
+      <state_interface name="collision"><param name="initial_value">0.0</param></state_interface>
+      <state_interface name="main_code"><param name="initial_value">0.0</param></state_interface>
+      <state_interface name="sub_code"><param name="initial_value">0.0</param></state_interface>
+      <state_interface name="enabled"><param name="initial_value">1.0</param></state_interface>
+      <state_interface name="robot_mode"><param name="initial_value">0.0</param></state_interface>
+      <state_interface name="robot_state"><param name="initial_value">1.0</param></state_interface>
+      <state_interface name="servo_queue_len"><param name="initial_value">0.0</param></state_interface>
+    </gpio>
+  </xacro:macro>
+
   <xacro:macro name="fr_ros2_control" params="
       tf_prefix:=''
       use_mock_hardware:=true
       mock_sensor_commands:='false'
+      mock_gpio_commands:='false'
+      ip:='192.168.58.2'
+      cmd_t_ms:=8
+      prefill:=3
+      update_rate_hz:=125
+      namespace:=''
+      allow_unverified_version:='false'
       initial_positions_file">
 
     <xacro:property name="initial_positions"
@@ -56,12 +89,17 @@
         <xacro:if value="${use_mock_hardware}">
           <plugin>mock_components/GenericSystem</plugin>
           <param name="mock_sensor_commands">${mock_sensor_commands}</param>
+          <param name="mock_gpio_commands">${mock_gpio_commands}</param>
         </xacro:if>
         <xacro:unless value="${use_mock_hardware}">
-          <!-- placeholder: real Fairino hardware plugin (progressive development:
-               enabled once the mock pipeline below is validated) -->
           <plugin>fr_robot_driver/FrRobotHardwareInterface</plugin>
           <param name="tf_prefix">${tf_prefix}</param>
+          <param name="ip">${ip}</param>
+          <param name="cmd_t_ms">${cmd_t_ms}</param>
+          <param name="prefill">${prefill}</param>
+          <param name="update_rate_hz">${update_rate_hz}</param>
+          <param name="namespace">${namespace}</param>
+          <param name="allow_unverified_version">${allow_unverified_version}</param>
         </xacro:unless>
       </hardware>
 
@@ -77,6 +115,8 @@
           initial_position="${initial_positions['wrist_2_joint']}"/>
       <xacro:_fr_hw_joint joint_name="wrist_3_joint" tf_prefix="${tf_prefix}"
           initial_position="${initial_positions['wrist_3_joint']}"/>
+
+      <xacro:_fr_status_gpio tf_prefix="${tf_prefix}"/>
 
     </ros2_control>
   </xacro:macro>

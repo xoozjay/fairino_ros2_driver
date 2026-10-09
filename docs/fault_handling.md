@@ -85,6 +85,17 @@ stateDiagram-v2
 | `on_deactivate` | 停发；`ServoMoveEnd`（S6） | 不把"已调用 ServoMoveEnd"当作已停止的依据 |
 | `on_error` | 停发；尽力而为地关闭连接（带超时，不得阻塞） | 不复位、不重连；返回 SUCCESS → UNCONFIGURED |
 
+**实现要点（已在仿真器验证）**：
+
+- `on_deactivate` / `on_error` 由 ros2_control 在 `ResourceManager::write()/read()` **内部同步**调用，即跑在实时线程上：
+  回调里只置标志、`halt()`，网络部分（`STOP`、`ServoMoveEnd`、关连接）交给一个短命的清理线程，下一次
+  `on_configure`/`on_activate` 先等它结束
+- `on_activate` 可能在**第一次 `read()` 之前**被调用（控制器管理器启动时）：状态直接取自 `StateReceiver::latest()`
+  （加锁、任意线程可用）；实时线程上的 `read()` 用不等待的 `tryLatest()`
+- 启动时若让控制器管理器自己激活硬件，激活失败会使 ros2_control **直接 abort**（连同 `reset_error` 服务）。
+  所以真机分支让硬件先停在 `inactive`，由 launch 显式激活（`hardware_components_initial_state`）
+- 控制周期快于 cmdT 时按整数倍抽取（`ratio = update_rate × cmdT`），不按时间累加（周期抖动会造成丢周期）
+
 **F2 注意**：检出故障时可能有一帧 ServoJ 已在途，它返回错误属预期，记 DEBUG 日志，不得再升级处理。
 
 ## 五、恢复流程（全部由操作者发起，驱动绝不自动执行 — F3）
@@ -92,11 +103,13 @@ stateDiagram-v2
 **ROBOT_FAULT**：
 
 1. 查看 GPIO 状态 / 话题中的 `main_code`、`sub_code`，排除故障原因
-2. 调用复位服务 `~/reset_error`（独立的小节点，单独连接 XML-RPC 调 `ResetAllError`）
+2. 调用复位服务 `<ns>/<tf_prefix>fr_robot_hw/reset_error`（`std_srvs/Trigger`；由插件挂在控制器管理器的执行器上，
+   **用独立的 XML-RPC 连接**调 `ResetAllError`，不与伺服连接混用）
    - ESTOP 时**拒绝**；COMM 故障时拒绝
 3. 等待状态帧中故障位清零；`ResetAllError` 不会掉使能（F5），但仍以 `rbtEnableState` 为准
 4. `ros2 control set_hardware_component_state fr_robot active`
-5. 重新激活轨迹控制器
+5. 激活即以**实际关节位置**重新 `ServoSender::start(actual)`（新的伺服会话，清空主机队列并重新预填；故障后固件队列大概率是空的），
+   之后的目标从实际位置起用斜坡，不能一步跳回（sdk_quirks S11）
 
 > 第 2–5 步可以后续合并为一个 `recover` 服务，但**触发仍必须来自操作者**。
 
@@ -112,7 +125,7 @@ configure → activate。
 - 固件负载、工具配置与实物一致，避免误报碰撞（见第七节）
 - **`ServoJ` 不受全局速度/加速度限制，只有固件最基本的角速度、电流与限位保护**（sdk_quirks S14）：`SetSpeed` 不能代替上面两条
 - **固件里最多排着 255 条运动指令**（S15）：停发 ServoJ 不会立刻停下，已入队的会走完（8 ms 周期下最长约 2 s）。
-  故障类（ROBOT_FAULT / ESTOP）由固件自己停；**非故障的主动停下（如 deactivate）应先发 `STOP`（8080）清空队列**，
+  故障类（ROBOT_FAULT / ESTOP）由固件自己停；`ServoSender::halt()` 只停发并丢弃主机队列，**非故障的主动停下（如 deactivate）应先发 `STOP`（8080）清空固件队列**，
   再 `ServoMoveEnd`——仿真器上 `STOP` 约 100 ms 内停稳且队列归零（S16）；真机 ❓
 
 ## 七、状态上报（GPIO 状态接口）
@@ -128,7 +141,8 @@ configure → activate。
 | `servo_queue_len` | 状态帧 `mc_queue_len`（555）：固件运动队列占用；稳态应约 0–2，持续增长 = 发送快于消费（S16） |
 
 - 由 broadcaster 发布为话题，供上层 / HMI 使用
-- **mock 对等**：mock 分支声明同名接口，用 `mock_sensor_commands` 注入值来演练故障与恢复流程
+- **mock 对等**：mock 分支声明同名接口；`mock_gpio_commands:=true` 给它们加回环命令接口，用来演练上层的故障处理
+  （只演练读侧：状态机本身由 `fr_robot_driver/test` 的假控制器测试覆盖）
 
 ## 八、固件侧坐标系配置（只为安全功能，不用于运动指令）
 
@@ -148,5 +162,7 @@ configure → activate。
 - [ ] `robot_mode` 手动/自动对 ServoJ 的影响
 - [ ] SI0/SI1 安全停止能否由 `ResetAllError` 清除
 - [ ] 伺服流中断（停发 ServoJ）时固件的行为（S4；仿真器见 S16）
+- [ ] 急停下插件的行为（仿真器无法注入急停：只有假控制器测试覆盖；`reset_error` 拒绝、硬件 → inactive）
+- [ ] `comm_timeout_periods`（默认 3 个状态周期 = 24 ms）在真机网络上是否会误报 COMM
 - [ ] 真机上的队列行为：255 条满时 `ServoJ` 是否同样阻塞、`mc_queue_len` 是否同样反映占用、`STOP` 是否同样清空队列（S16）
 - [ ] `flange_cur_pos` 单位与基坐标系约定

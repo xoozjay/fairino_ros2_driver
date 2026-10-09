@@ -14,7 +14,9 @@ import yaml
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import (
+    DeclareLaunchArgument, ExecuteProcess, OpaqueFunction, RegisterEventHandler)
+from launch.event_handlers import OnProcessExit
 from launch.substitutions import Command, LaunchConfiguration
 
 from launch_ros.actions import Node
@@ -35,6 +37,15 @@ def launch_setup(context, *args, **kwargs):
     world_origin_xyz = LaunchConfiguration('world_origin_xyz').perform(context)
     world_origin_quat = LaunchConfiguration('world_origin_quat').perform(context)
     launch_rviz = LaunchConfiguration('launch_rviz').perform(context).lower() in ('true', '1')
+    ip = LaunchConfiguration('ip').perform(context)
+    cmd_t_ms = int(LaunchConfiguration('cmd_t_ms').perform(context))
+    prefill = LaunchConfiguration('prefill').perform(context)
+    allow_unverified = LaunchConfiguration('allow_unverified_version').perform(context)
+    mock_gpio_commands = LaunchConfiguration('mock_gpio_commands').perform(context)
+    activate_hardware = LaunchConfiguration('activate_hardware').perform(context).lower() in ('true', '1')
+    mock = use_mock_hardware.lower() in ('true', '1')
+    # Real hardware: one ServoJ segment of cmdT per controller cycle (docs/sdk_quirks.md S1).
+    real_update_rate = 1000 // cmd_t_ms
 
     # Description: fr_description macro + ros2_control, in one document
     xacro_file = os.path.join(pkg_share, 'urdf', 'fr_controlled.urdf.xacro')
@@ -44,6 +55,13 @@ def launch_setup(context, *args, **kwargs):
         ' tf_prefix:=', tf_prefix,
         ' use_mock_hardware:=', use_mock_hardware,
         ' initial_positions_file:=', initial_positions_file,
+        ' mock_gpio_commands:=', mock_gpio_commands,
+        ' ip:=', ip,
+        ' cmd_t_ms:=', str(cmd_t_ms),
+        ' prefill:=', prefill,
+        ' update_rate_hz:=', str(real_update_rate),
+        ' namespace:=', namespace if namespace else "''",
+        ' allow_unverified_version:=', allow_unverified,
     ])
 
     # Controllers: instantiate the template with this robot's tf_prefix and
@@ -61,6 +79,18 @@ def launch_setup(context, *args, **kwargs):
         f.write(processed)
 
     ns = namespace or None
+
+    # controller_manager parameters: real hardware runs at 1000/cmdT Hz and enforces the URDF limits
+    cm_params = dict(controllers_dump['controller_manager']['ros__parameters'])
+    component = f'{tf_prefix}fr_robot'   # name of the <ros2_control> hardware component
+    if not mock:
+        cm_params['update_rate'] = real_update_rate
+        cm_params['enforce_command_limits'] = True
+        # Start configured but NOT active. If the controller manager activated the hardware itself
+        # and a precondition failed (emergency stop, fault, not enabled), ros2_control would abort
+        # the whole process, and with it the reset_error service. The activation below is an explicit
+        # step whose failure leaves everything else running.
+        cm_params['hardware_components_initial_state'] = {'inactive': [component]}
 
     # robot_state_publisher: URDF -> TF (frames carry tf_prefix already)
     rsp = Node(
@@ -80,7 +110,7 @@ def launch_setup(context, *args, **kwargs):
         namespace=namespace,
         parameters=[
             {'robot_description': ParameterValue(robot_description_content, value_type=str)},
-            controllers_dump['controller_manager']['ros__parameters'],
+            cm_params,
         ],
     )
 
@@ -98,7 +128,18 @@ def launch_setup(context, *args, **kwargs):
         arguments=['joint_trajectory_controller', '--param-file', processed_file],
     )
 
-    nodes = [rsp, control_node, jsb, jtc]
+    nodes = [rsp, control_node, jsb]
+    if mock or not activate_hardware:
+        nodes.append(jtc)
+    else:
+        cm_name = '/' + (namespace + '/' if namespace else '') + 'controller_manager'
+        activate = ExecuteProcess(
+            cmd=['ros2', 'control', 'set_hardware_component_state', component, 'active',
+                 '--controller-manager', cm_name],
+            output='screen')
+        # the trajectory controller needs the command interfaces, which exist once active
+        nodes.append(activate)
+        nodes.append(RegisterEventHandler(OnProcessExit(target_action=activate, on_exit=[jtc])))
 
     # Optional: attach the robot base to a shared world frame
     if use_world_tf:
@@ -145,5 +186,17 @@ def generate_launch_description():
         DeclareLaunchArgument('world_origin_xyz', default_value='0 0 0'),
         DeclareLaunchArgument('world_origin_quat', default_value='0 0 0 1'),  # quaternion
         DeclareLaunchArgument('launch_rviz', default_value='false'),
+        DeclareLaunchArgument('ip', default_value='192.168.58.2',
+                              description='controller address (real hardware only)'),
+        DeclareLaunchArgument('cmd_t_ms', default_value='8',
+                              description='ServoJ cmdT in whole ms; the controller manager runs at 1000/cmd_t_ms Hz'),
+        DeclareLaunchArgument('prefill', default_value='3',
+                              description='standing ServoJ segments at activation (jitter buffer)'),
+        DeclareLaunchArgument('allow_unverified_version', default_value='false'),
+        DeclareLaunchArgument('activate_hardware', default_value='true',
+                              description='real hardware: activate the component after startup '
+                                          '(false: leave it inactive, e.g. to reset a fault first)'),
+        DeclareLaunchArgument('mock_gpio_commands', default_value='false',
+                              description='mock only: loop-back command interfaces on fr_status'),
         OpaqueFunction(function=launch_setup),
     ])

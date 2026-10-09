@@ -11,12 +11,22 @@
       tf_prefix              : link/joint prefix (default "")
       use_mock_hardware      : mock_components/GenericSystem (default true)
       initial_positions_file : ros2_control initial positions
+      ip, cmd_t_ms, prefill, update_rate_hz, namespace, allow_unverified_version:
+                             real hardware only, see fr_ros2_control.xacro
+      mock_gpio_commands     : mock only, loop-back command interfaces on fr_status
   -->
   <xacro:arg name="model" default="fairino20_v6"/>
   <xacro:arg name="tf_prefix" default=""/>
   <xacro:arg name="use_mock_hardware" default="true"/>
   <xacro:arg name="initial_positions_file"
              default="$(find fr_robot_driver)/config/initial_positions.yaml"/>
+  <xacro:arg name="mock_gpio_commands" default="false"/>
+  <xacro:arg name="ip" default="192.168.58.2"/>
+  <xacro:arg name="cmd_t_ms" default="8"/>
+  <xacro:arg name="prefill" default="3"/>
+  <xacro:arg name="update_rate_hz" default="125"/>
+  <xacro:arg name="namespace" default=""/>
+  <xacro:arg name="allow_unverified_version" default="false"/>
 
   <xacro:include filename="$(find fr_description)/urdf/fr_macro.xacro"/>
   <xacro:include filename="$(find fr_robot_driver)/urdf/fr_ros2_control.xacro"/>
@@ -33,6 +43,13 @@
   <xacro:fr_ros2_control
       tf_prefix="${tf_prefix}"
       use_mock_hardware="$(arg use_mock_hardware)"
+      mock_gpio_commands="$(arg mock_gpio_commands)"
+      ip="$(arg ip)"
+      cmd_t_ms="$(arg cmd_t_ms)"
+      prefill="$(arg prefill)"
+      update_rate_hz="$(arg update_rate_hz)"
+      namespace="$(arg namespace)"
+      allow_unverified_version="$(arg allow_unverified_version)"
       initial_positions_file="$(arg initial_positions_file)"/>
 
 </robot>

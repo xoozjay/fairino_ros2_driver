@@ -52,8 +52,8 @@ ros2_control 驱动 `fr_robot_driver`、自研 C++ 客户端库 `fr_client_libra
 
 ### 3. `src/` 中的 `fr_robot_driver` 是 ros2_control 驱动包（mock 优先）
 
-对标 `ur_robot_driver`，渐进式开发：**在 `use_mock_hardware:=true` 管线
-全绿之前不碰真机 SDK**（`fr_robot_driver/FrRobotHardwareInterface` 占位中）：
+对标 `ur_robot_driver`。mock 管线已验收；真机插件 `FrRobotHardwareInterface`
+已实现并在 3.8.3 仿真器上验证（3.8.4 真机待验证，见 TODO.md）：
 
 - 初始位形是**场景属性**：单机用 `config/initial_positions.yaml`，
   多机单元必须传入场景专属初始位形（如 `workbench_initial_positions.yaml`），
@@ -63,7 +63,10 @@ ros2_control 驱动 `fr_robot_driver`、自研 C++ 客户端库 `fr_client_libra
   spawner 参数文件根键带命名空间且必须声明 `type`（详见包内 README 踩坑记录）；
 - 验证命令：launch 后 `ros2 control list_controllers` 应为 active，
   `ros2 topic echo /<ns>/joint_states --once` 应有初始位形值，
-  发 FollowJointTrajectory 后读回轨迹终点。
+  发 FollowJointTrajectory 后读回轨迹终点；
+- 真机分支同样的验证，加 `use_mock_hardware:=false ip:=<控制器>`：硬件应为 `active`、`fr_status/fault_class = 0`；
+  再按 `fr_robot_driver/README.md` 的"故障与恢复"演练一次（步长检查、`reset_error`、重新激活）；
+- 插件的 `on_deactivate`/`on_error` 由 ros2_control 在实时线程内同步调用，**不得做网络操作**（交给清理线程）。
 
 ### 4. 版本约束（硬性）
 
