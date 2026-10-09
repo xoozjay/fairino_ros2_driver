@@ -41,7 +41,7 @@ install(TARGETS ${PROJECT_NAME} EXPORT export_${PROJECT_NAME}
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   foreach(t robot_state software_version frame_parser state_receiver instant_command
-      xmlrpc_codec http_connection robot_api servo_sender spsc_queue fault_state)
+      xmlrpc_codec http_connection robot_api servo_sender spsc_queue fault_state robot_model)
     ament_add_gtest(test_${t} test/test_${t}.cpp)
     target_link_libraries(test_${t} ${PROJECT_NAME})
   endforeach()

@@ -6,6 +6,7 @@
 #include <thread>
 
 #include "fr_client_library/robot_api.hpp"
+#include "fr_client_library/robot_model.hpp"
 #include "fr_client_library/state_receiver.hpp"
 
 using namespace fr_client_library;
@@ -54,8 +55,10 @@ int main(int argc, char ** argv)
     const auto & v = info.value;
     const char * verdict = !v.version ? "UNPARSEABLE version" :
       isVerifiedVersion(*v.version) ? "verified" : "NOT verified";
-    std::printf("model=%s software=%s (%s) controller=%s\n", v.robot_model.c_str(),
-      v.software_version.c_str(), verdict, v.controller_version.c_str());
+    const char * description = descriptionModelFor(v.robot_model);
+    std::printf("model=%s (%s) software=%s (%s) controller=%s\n", v.robot_model.c_str(),
+      description ? description : "no fr_description model", v.software_version.c_str(), verdict,
+      v.controller_version.c_str());
     if (v.version && stateFrameSize(*v.version) != 0) {
       version = *v.version;
     } else {

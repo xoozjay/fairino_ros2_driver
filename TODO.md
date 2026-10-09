@@ -5,6 +5,10 @@
 
 ## 待办
 
+### 驱动（真机）
+
+- [ ] 型号表除 FR5 V6.0 外各行的真实型号字符串 —— done when: 实物或厂商确认
+
 ### 规划层（fr_moveit_config）
 
 - [ ] 对 `fr_description` 跑 MoveIt Setup Assistant（tip 选 `flange`），替代
