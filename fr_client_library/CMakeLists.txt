@@ -27,6 +27,11 @@ target_link_libraries(fr_probe ${PROJECT_NAME})
 target_compile_options(fr_probe PRIVATE -Wall -Wextra -Wpedantic)
 install(TARGETS fr_probe DESTINATION lib/${PROJECT_NAME})
 
+add_executable(fr_servo_bench src/fr_servo_bench.cpp)
+target_link_libraries(fr_servo_bench ${PROJECT_NAME})
+target_compile_options(fr_servo_bench PRIVATE -Wall -Wextra -Wpedantic)
+install(TARGETS fr_servo_bench DESTINATION lib/${PROJECT_NAME})
+
 install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME})
 install(TARGETS ${PROJECT_NAME} EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib

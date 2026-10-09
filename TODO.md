@@ -34,5 +34,7 @@
 
 ## 已知风险
 
+- **控制器 20004 与 8080 单客户端**：驱动运行时诊断工具（`fr_probe`、`fr_servo_bench`）连不上，
+  排障期间只能停驱动 —— impact: 真机排障窗口
 - **故障恢复全由操作者发起**，驱动绝不自动复位（[docs/fault_handling.md](docs/fault_handling.md)）
   —— impact: 无人值守时故障即停机
