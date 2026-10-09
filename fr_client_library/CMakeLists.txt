@@ -5,6 +5,7 @@ find_package(ament_cmake REQUIRED)
 
 add_library(${PROJECT_NAME}
   src/frame_parser.cpp
+  src/instant_command.cpp
   src/software_version.cpp
   src/state_receiver.cpp
   src/tcp_socket.cpp)
@@ -25,7 +26,7 @@ install(TARGETS ${PROJECT_NAME} EXPORT export_${PROJECT_NAME}
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
-  foreach(t robot_state software_version frame_parser state_receiver)
+  foreach(t robot_state software_version frame_parser state_receiver instant_command)
     ament_add_gtest(test_${t} test/test_${t}.cpp)
     target_link_libraries(test_${t} ${PROJECT_NAME})
   endforeach()
