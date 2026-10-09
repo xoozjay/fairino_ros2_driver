@@ -4,7 +4,12 @@ project(fr_client_library)
 find_package(ament_cmake REQUIRED)
 
 add_library(${PROJECT_NAME}
-  src/software_version.cpp)
+  src/frame_parser.cpp
+  src/software_version.cpp
+  src/state_receiver.cpp
+  src/tcp_socket.cpp)
+find_package(Threads REQUIRED)
+target_link_libraries(${PROJECT_NAME} PUBLIC Threads::Threads)
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
@@ -20,7 +25,7 @@ install(TARGETS ${PROJECT_NAME} EXPORT export_${PROJECT_NAME}
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
-  foreach(t robot_state software_version)
+  foreach(t robot_state software_version frame_parser state_receiver)
     ament_add_gtest(test_${t} test/test_${t}.cpp)
     target_link_libraries(test_${t} ${PROJECT_NAME})
   endforeach()
