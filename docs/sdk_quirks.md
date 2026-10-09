@@ -68,8 +68,8 @@ curl -s -H 'Content-Type: text/xml' http://192.168.58.2:20003/RPC2 --data \
 `[0, 'FR5-V1-002(V6.0)', 'v3.8.3', 'V3.8.8-LA']`，而其状态帧为 960 B（与 SDK 3.8.4 布局一致）——
 **软件版本是第二个字符串 `webVersion`**（`v3.8.3`，与仿真器发行版本一致）；`controllerVersion`（`V3.8.8-LA`）
 是厂商的另一套编号，只显示、不比较。（厂商的 `GetFirmwareVersion` 指控制箱板/驱动器固件，别和它混淆。）
-白名单与状态帧长都按软件版本。📋 维护者确认真机软件版本为 **3.8.4.2**（第四位是 bug 修复版本，不改功能，
-解析后只显示、不参与比较）；仿真器只有 3.8.3，没有 3.8.4。❓ 真机 `GetSoftwareVersion` 返回的确切字符串形式待首次联机确认。另有 `GetSlaveFirmVersion` / `GetSlaveHardVersion`
+白名单与状态帧长都按软件版本。📋 维护者确认真机软件版本为 **3.8.4.2**（第四位及以后是 bug 修复版本，不改功能，
+视为同一版本，解析时忽略）；仿真器只有 3.8.3，没有 3.8.4。❓ 真机 `GetSoftwareVersion` 返回的确切字符串形式待首次联机确认。另有 `GetSlaveFirmVersion` / `GetSlaveHardVersion`
 （控制箱板、6 个驱动器、末端板，各 8 个字符串）；注意 SDK 的 `GetFirmwareVersion` 在安全停止时会被
 `GetSafetyCode()` 拦截返回 99。❓ 控制器是否开放 `system.listMethods` 内省待测。
 
