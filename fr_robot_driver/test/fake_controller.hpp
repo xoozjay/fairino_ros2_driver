@@ -140,6 +140,7 @@ private:
   }
   static std::string i4(int v) {return "<value><i4>" + std::to_string(v) + "</i4></value>";}
   static std::string str(const std::string & s) {return "<value><string>" + s + "</string></value>";}
+  static std::string dbl(double v) {return "<value><double>" + std::to_string(v) + "</double></value>";}
 
   void serveXmlRpc(int fd, const std::atomic<bool> & stop)
   {
@@ -183,6 +184,11 @@ private:
     }
     if (method == "GetRobotRealtimeStateSamplePeriod") {
       return array(i4(0) + i4(period_));
+    }
+    if (method == "GetTargetPayload") {return array(i4(0) + dbl(0));}
+    if (method == "GetTargetPayloadCog") {return array(i4(0) + dbl(0) + dbl(0) + dbl(0));}
+    if (method == "GetTCPOffset") {
+      return array(i4(0) + dbl(0) + dbl(0) + dbl(0) + dbl(0) + dbl(0) + dbl(0));
     }
     if (method == "SetRobotRealtimeStateSamplePeriod") {
       const auto p = body.find("<i4>") + 4;

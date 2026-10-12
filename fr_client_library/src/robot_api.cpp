@@ -1,5 +1,6 @@
 #include "fr_client_library/robot_api.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace fr_client_library
@@ -114,6 +115,52 @@ ApiResult<int> RobotApi::getRealtimeStateSamplePeriod()
 ApiStatus RobotApi::setRealtimeStateSamplePeriod(int period_ms)
 {
   return callInt("SetRobotRealtimeStateSamplePeriod", {period_ms});
+}
+
+ApiStatus RobotApi::callDoubles(
+  const std::string & method, std::size_t n, std::vector<double> & out)
+{
+  std::vector<XmlRpcValue> v;
+  if (const ApiStatus st = callArray(method, {1}, v); !st.ok()) {
+    return st;
+  }
+  out.clear();
+  for (const auto & x : v) {
+    if (!x.isDouble()) {break;}
+    out.push_back(x.asDouble());
+  }
+  if (v.size() != n || out.size() != n) {
+    http_.close();
+    return error(ApiError::Protocol, 0, method + ": expected " + std::to_string(n) + " doubles");
+  }
+  return {};
+}
+
+ApiResult<double> RobotApi::getTargetPayload()
+{
+  ApiResult<double> r;
+  std::vector<double> v;
+  r.status = callDoubles("GetTargetPayload", 1, v);
+  if (r.ok()) {r.value = v[0];}
+  return r;
+}
+
+ApiResult<std::array<double, 3>> RobotApi::getTargetPayloadCog()
+{
+  ApiResult<std::array<double, 3>> r;
+  std::vector<double> v;
+  r.status = callDoubles("GetTargetPayloadCog", 3, v);
+  if (r.ok()) {std::copy(v.begin(), v.end(), r.value.begin());}
+  return r;
+}
+
+ApiResult<std::array<double, 6>> RobotApi::getTcpOffset()
+{
+  ApiResult<std::array<double, 6>> r;
+  std::vector<double> v;
+  r.status = callDoubles("GetTCPOffset", 6, v);
+  if (r.ok()) {std::copy(v.begin(), v.end(), r.value.begin());}
+  return r;
 }
 
 ApiStatus RobotApi::resetAllError() {return callInt("ResetAllError", {});}

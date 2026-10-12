@@ -317,6 +317,22 @@ CallbackReturn FrRobotHardwareInterface::on_configure(const rclcpp_lifecycle::St
         closeConnections();
         return CallbackReturn::FAILURE;
       }
+      // What the controller assumes is mounted. Read only: the driver never writes it.
+      const int tool = first.state.tool;
+      std::lock_guard<std::mutex> lock(api_mutex_);
+      const auto w = api_->getTargetPayload();
+      const auto cog = api_->getTargetPayloadCog();
+      const auto tcp = api_->getTcpOffset();
+      if (w.ok() && cog.ok() && tcp.ok()) {
+        RCLCPP_INFO(log, "controller payload %.3f kg, CoG [%.1f %.1f %.1f] mm; tool %d, TCP "
+          "[%.1f %.1f %.1f] mm [%.2f %.2f %.2f] deg", w.value, cog.value[0], cog.value[1],
+          cog.value[2], tool, tcp.value[0], tcp.value[1], tcp.value[2], tcp.value[3], tcp.value[4],
+          tcp.value[5]);
+      } else {
+        RCLCPP_WARN(log, "could not read payload/tool from the controller (errors %d/%d/%d)",
+          static_cast<int>(w.status.error), static_cast<int>(cog.status.error),
+          static_cast<int>(tcp.status.error));
+      }
     }
 
     // 8080 has room for one client only: this driver must be its sole user (sdk_quirks L8)

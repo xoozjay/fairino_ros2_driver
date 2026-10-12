@@ -71,6 +71,12 @@ public:
   ApiResult<int> getRealtimeStateSamplePeriod();  // ms
   ApiStatus setRealtimeStateSamplePeriod(int period_ms);
 
+  // Payload and tool as configured on the controller (read only). Sent with flag = 1, the SDK's
+  // default (non-blocking).
+  ApiResult<double> getTargetPayload();  // kg
+  ApiResult<std::array<double, 3>> getTargetPayloadCog();  // mm
+  ApiResult<std::array<double, 6>> getTcpOffset();  // x, y, z [mm], rx, ry, rz [deg]
+
   // ---- control and motion (every call returns the controller's error code in `status.code`) ----
   // Enabling, mode, speed, payload, tool and digital outputs are left out on purpose: the
   // operator sets them, never the driver (docs/sdk_quirks.md F3, F6, G2).
@@ -91,6 +97,8 @@ private:
     const std::string & method, const std::vector<XmlRpcValue> & params, XmlRpcValue & result);
   // For methods answering a bare errcode.
   ApiStatus callInt(const std::string & method, const std::vector<XmlRpcValue> & params);
+  // For getters taking `flag` and answering [errcode, n doubles].
+  ApiStatus callDoubles(const std::string & method, std::size_t n, std::vector<double> & out);
   // For methods answering [errcode, values...]; `values` = the rest.
   ApiStatus callArray(
     const std::string & method, const std::vector<XmlRpcValue> & params,

@@ -89,6 +89,41 @@ TEST(RobotApi, SamplePeriodGetAndSet)
     "</methodName>\r\n<params><param><value><i4>4</i4></value></param></params></methodCall>\r\n");
 }
 
+// Answers shaped as a 3.8.4.2 controller sends them ([i4 errcode, double...]).
+TEST(RobotApi, PayloadAndTcpGetters)
+{
+  const auto d = [](const char * v) {return std::string("<value><double>") + v + "</double></value>";};
+  const auto arr = [](const std::string & values) {
+      return xmlResponse("<value><array><data><value><i4>0</i4></value>" + values +
+               "</data></array></value>");
+    };
+  ScriptedController c({
+      arr(d("2.5")),
+      arr(d("3") + d("4") + d("5")),
+      arr(d("1") + d("2") + d("3") + d("-90") + d("0.5") + d("180")),
+      arr(d("1") + d("2"))});  // too short
+  RobotApi api("127.0.0.1", c.port(), fast());
+  ASSERT_TRUE(api.connect());
+  const auto w = api.getTargetPayload();
+  ASSERT_TRUE(w.ok());
+  EXPECT_DOUBLE_EQ(w.value, 2.5);
+  const auto cog = api.getTargetPayloadCog();
+  ASSERT_TRUE(cog.ok());
+  EXPECT_EQ(cog.value, (std::array<double, 3>{3, 4, 5}));
+  const auto tcp = api.getTcpOffset();
+  ASSERT_TRUE(tcp.ok());
+  EXPECT_EQ(tcp.value, (std::array<double, 6>{1, 2, 3, -90, 0.5, 180}));
+  EXPECT_EQ(api.getTcpOffset().status.error, ApiError::Protocol);
+  api.close();
+  ASSERT_EQ(c.requests.size(), 4u);
+  EXPECT_EQ(
+    c.requests[0],
+    "<?xml version=\"1.0\"?>\r\n<methodCall><methodName>GetTargetPayload</methodName>\r\n"
+    "<params><param><value><i4>1</i4></value></param></params></methodCall>\r\n");
+  EXPECT_NE(c.requests[1].find("GetTargetPayloadCog"), std::string::npos);
+  EXPECT_NE(c.requests[2].find("GetTCPOffset"), std::string::npos);
+}
+
 TEST(RobotApi, ControllerErrorCode)
 {
   ScriptedController c({
