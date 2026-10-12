@@ -1,6 +1,32 @@
 # AGENTS.md
 
+开始任何工作前，若技能列表里有 `kcocoa-project-workflow`，先读它。
+
 本仓库的开发约定，供 coding agent 和开发者遵循。
+
+## 项目
+
+面向法奥（Fairino）协作机器人的 ROS 2 包集合，对标 UR 官方 ROS2 教程
+（`references/Universal_Robots_ROS2_Tutorials`）：参数化描述包 `fr_description`、
+ros2_control 驱动 `fr_robot_driver`、自研 C++ 客户端库 `fr_client_library`，
+最终支持多机械臂单元（各自命名空间 + `tf_prefix` + 独立驱动）。
+
+**渐进式开发协议**：mock 管线（`use_mock_hardware:=true`）全绿之前不碰真机 SDK。
+
+不在范围内：本机路径、账号、凭证、维护者私有流程——这些不得写入本仓库。
+
+## 常用命令
+
+- **Check（每次提交前必须通过）：`./scripts/check.sh`** —— 构建本仓库全部包并运行 gtest；
+  从零验证同一工作区用 `rm -rf build install log` 后再跑同一条命令
+- Build：工作区根目录 `colcon build`（默认 symlink-install + ccache + compile_commands，
+  见 `/etc/colcon/defaults.yaml`）；单包 `colcon build --packages-up-to fr_robot_driver`
+- Run：`ros2 launch fr_robot_driver fr_control.launch.py`（默认 mock）；
+  仿真器/真机加 `use_mock_hardware:=false ip:=<控制器>`
+- Logs：`log/latest_test/`、`build/<pkg>/Testing/Temporary/LastTest.log`、`~/.ros/log/`
+- Environment：容器内工作区为 `/workspace/chemistry_os2_ws`；宿主用 `./dev shell`、
+  `./dev run <cmd>`。共享资源：控制器（真机，或仿真器 `192.168.58.2`）；
+  其 20004 与 8080 端口同时只服务一个客户端，驱动运行时 `fr_probe` 等工具连不上
 
 ## 核心规则
 
@@ -89,7 +115,10 @@
 
 ## 相关文档
 
+- [TODO.md](TODO.md) — 未决事项、未验证的断言、已知风险
+- [docs/plans/](docs/plans/) — 大改动的计划（`YYYYMMDD-<slug>.md`，先 `Status: draft`，批准后才动代码）
 - [fr_description/README.md](fr_description/README.md) — 架构、用法、命名规范化对照表
+- [fr_client_library/README.md](fr_client_library/README.md) — 客户端库的三条通路、设计决策、工具与测试
 - [fr_robot_driver/README.md](fr_robot_driver/README.md) — 驱动架构、双机工作台 demo、踩坑记录
 - [docs/extension_pattern.md](docs/extension_pattern.md) — 扩展方式与验证命令
 - [docs/sdk_quirks.md](docs/sdk_quirks.md) — libfairino SDK（固件 3.8.4）陷阱清单与驱动设计约束
