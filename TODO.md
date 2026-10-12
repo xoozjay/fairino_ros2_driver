@@ -41,10 +41,13 @@
 - 状态推送周期最小值（仿真器 8 ms，≤ 7 ms 被拒绝并返回码 4）
 - 8080 即时指令回执内容 `1` 的含义与失败取值；收发超时默认 1000 ms
 - 参数个数不符时控制器的处理（`ERR_PARAM_NUM`）
+- SI0/SI1 在急停以外的原因下能否由 `ResetAllError` 清除（急停后不能，见 `docs/sdk_quirks.md` F4）
 - 3.7.6–3.8.3 与 3.8.4 之外的状态帧：只做过 SDK 各 tag 静态比对，未上真机
 
 ## 已知风险
 
+- **`ServoJ` 往返最大 7.7 ms，接近 8 ms 周期**（真机 S17）：网络更差时发送会落后，`ServoSender` 追赶、
+  固件队列吸收 —— impact: 队列抖动变大，`prefill` 余量被吃掉
 - **控制器 20004 与 8080 单客户端**：驱动运行时诊断工具（`fr_probe`、`fr_servo_bench`）连不上，
   排障期间只能停驱动 —— impact: 真机排障窗口
 - **`ServoJ` 不受全局速度/加速度限制**（[docs/sdk_quirks.md](docs/sdk_quirks.md) S14）：

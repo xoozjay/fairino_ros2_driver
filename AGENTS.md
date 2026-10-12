@@ -53,7 +53,7 @@ ros2_control 驱动 `fr_robot_driver`、自研 C++ 客户端库 `fr_client_libra
 ### 3. `src/` 中的 `fr_robot_driver` 是 ros2_control 驱动包（mock 优先）
 
 对标 `ur_robot_driver`。mock 管线已验收；真机插件 `FrRobotHardwareInterface`
-已实现并在 3.8.3 仿真器上验证（3.8.4 真机待验证，见 TODO.md）：
+已实现，在 3.8.3 仿真器与一台 3.8.4.2 真机（FR5，正装）上验证（[docs/plans/20261012-real-robot-bringup.md](docs/plans/20261012-real-robot-bringup.md)）：
 
 - 初始位形是**场景属性**：单机用 `config/initial_positions.yaml`，
   多机单元必须传入场景专属初始位形（如 `workbench_initial_positions.yaml`），
@@ -109,6 +109,10 @@ ros2_control 驱动 `fr_robot_driver`、自研 C++ 客户端库 `fr_client_libra
 - 本仓库只引用**公开资料**（官方文档、SDK 源码）与**仿真器/真机黑盒实测**；任何非公开资料的内容、
   路径或出处都不得写入本仓库的文件或提交信息；
 - 故障处理遵循 [docs/fault_handling.md](docs/fault_handling.md)：故障期间停发运动指令、**绝不自动复位**。
+- **真机操作**：运动前向维护者确认有人在急停旁与本次允许的运动范围；起始位形用 `fr_probe` 读、只存会话日志
+  （现场布置会变，位形不入库）；控制器访问一律经 `flock /tmp/fr_robot_<ip>.lock`；不发夹爪指令、
+  不写负载/工具、不使能/下使能、不复位——这些只由操作者发起（sdk_quirks F3、F6、G2）；
+  急停会让控制箱断电，之后须断电重启（F4）；结束进程按 PID，`pkill -f` 会匹配到自己的 shell。
 
 ### 参考：`references/` 中的其他基线
 
