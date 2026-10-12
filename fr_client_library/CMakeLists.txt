@@ -19,17 +19,17 @@ target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include/${PROJECT_NAME}>)
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
-target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wpedantic -Werror)
 set_target_properties(${PROJECT_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_executable(fr_probe src/fr_probe.cpp)
 target_link_libraries(fr_probe ${PROJECT_NAME})
-target_compile_options(fr_probe PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(fr_probe PRIVATE -Wall -Wextra -Wpedantic -Werror)
 install(TARGETS fr_probe DESTINATION lib/${PROJECT_NAME})
 
 add_executable(fr_servo_bench src/fr_servo_bench.cpp)
 target_link_libraries(fr_servo_bench ${PROJECT_NAME})
-target_compile_options(fr_servo_bench PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(fr_servo_bench PRIVATE -Wall -Wextra -Wpedantic -Werror)
 install(TARGETS fr_servo_bench DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY include/ DESTINATION include/${PROJECT_NAME})
