@@ -1,0 +1,102 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!--
+    gripper_dahuan_pgi140: the DH-Robotics PGI-140-80 parallel gripper, attached to a link of the
+    same tf_prefix (default tool0).
+
+    Root link <tf_prefix>gripper_base_link; the fingers extend along its +z and move along x.
+    <tf_prefix>left_finger_joint is the actuated joint: 0 = closed (the fingertips touch), 0.04 m =
+    fully open, per jaw (0 % / 100 % of the controller's gripper position). The finger meshes sit
+    at the open end of their travel, so the joint origins are at that end and the axes point inward
+    (-x): an increasing opening moves each finger outward. <tf_prefix>right_finger_joint mimics it;
+    the two joint frames are mirrored, so the maximum total opening is 0.08 m.
+
+    Parameters:
+      tf_prefix : prefix of every link and joint, and of `parent` (default "")
+      parent    : link the gripper is mounted on, without prefix (default tool0)
+      xyz, rpy  : mounting pose in `parent`. The default puts the lowest point of the base mesh
+                  (z = -0.0242 m) on the parent's xy plane, with no rotation: on a Fairino tool0
+                  the fingers then move along tool0 x.
+  -->
+  <xacro:macro name="gripper_dahuan_pgi140" params="tf_prefix:='' parent:='tool0' xyz:='0 0 0.0242' rpy:='0 0 0'">
+
+    <joint name="${tf_prefix}${parent}_to_gripper_base" type="fixed">
+      <origin xyz="${xyz}" rpy="${rpy}"/>
+      <parent link="${tf_prefix}${parent}"/>
+      <child link="${tf_prefix}gripper_base_link"/>
+    </joint>
+
+    <link name="${tf_prefix}gripper_base_link">
+      <visual>
+        <origin xyz="0.04 -0.005 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://gripper_dahuan_pgi140/collision/hand_base_link.STL"/>
+        </geometry>
+        <material name="">
+          <color rgba="0.5 0.5 0.5 1"/>
+        </material>
+      </visual>
+      <collision>
+        <!-- The vendor shipped the flexible connector cable as part of the same rigid shell, so
+             MoveIt treated the cable as a rigid body and it produced false collisions. Collision
+             uses hand_base_link_no_cable.STL (rigid base + connector housing only); the visual
+             keeps the full vendor mesh including the cable. -->
+        <origin xyz="0.04 -0.005 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://gripper_dahuan_pgi140/collision/hand_base_link_no_cable.STL"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <link name="${tf_prefix}left_finger_link">
+      <visual>
+        <geometry>
+          <mesh filename="package://gripper_dahuan_pgi140/collision/finger_link1.STL"/>
+        </geometry>
+        <material name="">
+          <color rgba="0.8 0.8 0.8 1"/>
+        </material>
+      </visual>
+      <collision>
+        <geometry>
+          <mesh filename="package://gripper_dahuan_pgi140/collision/finger_link1.STL"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${tf_prefix}left_finger_joint" type="prismatic">
+      <origin xyz="0.0745 0 0" rpy="1.5708 0 0"/>
+      <parent link="${tf_prefix}gripper_base_link"/>
+      <child link="${tf_prefix}left_finger_link"/>
+      <axis xyz="-1 0 0"/>
+      <limit lower="0" upper="0.04" effort="40" velocity="1.0"/>
+    </joint>
+
+    <link name="${tf_prefix}right_finger_link">
+      <visual>
+        <geometry>
+          <mesh filename="package://gripper_dahuan_pgi140/collision/finger_link2.STL"/>
+        </geometry>
+        <material name="">
+          <color rgba="0.8 0.8 0.8 1"/>
+        </material>
+      </visual>
+      <collision>
+        <geometry>
+          <mesh filename="package://gripper_dahuan_pgi140/collision/finger_link2.STL"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${tf_prefix}right_finger_joint" type="prismatic">
+      <origin xyz="-0.0825 0.0087157 -0.0015" rpy="1.5708 0 3.1416"/>
+      <parent link="${tf_prefix}gripper_base_link"/>
+      <child link="${tf_prefix}right_finger_link"/>
+      <axis xyz="-1 0 0"/>
+      <!-- Same positive command as the left jaw; the joint frame is mirrored. -->
+      <mimic joint="${tf_prefix}left_finger_joint" multiplier="1.0" offset="0.0"/>
+      <limit lower="0" upper="0.04" effort="40" velocity="1.0"/>
+    </joint>
+
+  </xacro:macro>
+</robot>
