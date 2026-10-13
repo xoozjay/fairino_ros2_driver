@@ -40,7 +40,8 @@ launch 参数：`ip`、`cmd_t_ms`（ServoJ 的 cmdT，整毫秒，默认 8）、
 | 现象 | 驱动做什么 | 恢复 |
 |---|---|---|
 | 固件故障 / 碰撞 / 安全停止 / 掉使能 | 立即停发，硬件 → `inactive`，`fr_status/fault_class = 1`，故障码原样报在 `~/status` | 排除原因 → `reset_error` → 激活硬件 → 激活控制器 |
-| 命令超过单周期步长（URDF 速度限位 × cmdT） | 拒绝该命令（固件从未见到），同上，`main_code` 仍为 0 | 同上 |
+| 命令超过单周期步长（URDF 速度限位 × cmdT） | 拒绝该命令（固件从未见到），同上，`main_code` 仍为 0 | 同上（`reset_error` 无事可做，可省） |
+| 夹爪完成后被扣住的机械臂命令 2 s 内未回到停住位置（见"夹爪"） | 保护停止，同上，`main_code` 仍为 0 | 重新激活硬件 → 激活控制器 |
 | 急停（本硬件：控制箱断电，见下） | 先是通信中断；控制器自行上线后状态帧报 `main_code=1 sub_code=149`，即 `fault_class = 1`。`reset_error` 拒绝（硬件已 `unconfigured`） | 控制箱断电重启（sdk_quirks F4），之后重新 configure → activate |
 | 状态帧真的报 `EmergencyStop=1` | 同固件故障，`fault_class = 2`；`reset_error` **拒绝** | 只能硬件重启控制器，之后重新 configure |
 | 通信中断（状态帧超时/连接断开/ServoJ 连接失败） | 硬件 → `unconfigured`，`fault_class = 3`；`reset_error` 拒绝；之后只读重连状态流（见下） | 确认控制器在线后重新 configure → activate |
@@ -83,6 +84,82 @@ ros2_control 状态接口只有 `<tf_prefix>fr_status/fault_class`（经 `joint_
 - `ServoJ` 不受全局速度/加速度限制（sdk_quirks S14）：保护靠 URDF 限位、`enforce_command_limits`（真机分支默认开）
   和插件的步长检查。
 - mock 分支加 `mock_gpio_commands:=true` 会给 `fr_status/fault_class` 加回环命令接口，用来演练上层的故障处理。
+
+### 夹爪（大寰 PGI-140）
+
+`gripper:=pgi140` 把 `gripper_dahuan_pgi140` 挂到 `tool0`，ros2_control 多一个关节 `<tf_prefix>left_finger_joint`
+（开度 = 单侧手指行程，0 闭合 – 0.04 m 全开；`right_finger_joint` 是 mimic，只出现在 TF），并启动
+`gripper_controller`（`parallel_gripper_action_controller`，action `<ns>/gripper_controller/gripper_cmd`，
+类型 `control_msgs/action/ParallelGripperCommand`）。mock 与真机同一套接口。
+
+```bash
+ros2 launch fr_robot_driver fr_control.launch.py model:=fairino5_v6 gripper:=pgi140 [use_mock_hardware:=false ip:=<控制器>]
+ros2 action send_goal /gripper_controller/gripper_cmd control_msgs/action/ParallelGripperCommand \
+  "{command: {name: [left_finger_joint], position: [0.02]}}"          # 开到 50 %
+```
+
+**安全约定（真机）**：
+
+- **激活只由操作者发起**：`ros2 service call /<ns>/<tf_prefix>fr_robot_hw/gripper/activate std_srvs/srv/Trigger`。
+  激活必然张开到满行程，不论手里有什么（sdk_quirks G2）：调用前确认手指之间无物、张开路径无障碍。
+  驱动在启动、configure、activate、复位时都不激活。激活状态属于控制器，每次控制箱上电一次（G1）。
+  服务在已激活、机械臂故障、机械臂在动（任一关节 > 0.5 °/s，或伺服流未停发）、硬件未 configure 时拒绝；
+  夹爪故障不拒绝——激活就是清除夹爪故障的办法（G11）。否则发 `ActGripper(index, 1)`，等状态帧报激活且无故障
+  （最多 3 s）后返回；激活期间机械臂保持不动
+- **只转发"在可用夹爪上启动的"控制器的命令**：`gripper_controller` 开始占用开度接口时，夹爪已激活、无故障、
+  硬件 active，才算"已武装"（`~/status` 的 `gripper_commands = armed`）；此后一旦夹爪不可用（未激活、夹爪故障、
+  机械臂故障、硬件停用）即解除，且恢复后**不会**自动重新武装。这样激活前、故障中留下的旧目标永远不会在恢复后
+  被执行。所以**激活之后要重启一次 `gripper_controller`**（夹爪在驱动启动前已激活则不需要）：
+
+  ```bash
+  ros2 control set_controller_state gripper_controller inactive
+  ros2 control set_controller_state gripper_controller active
+  ```
+
+  未武装时目标不会发出，action 在 `stall_timeout`（2 s）后 ABORTED
+
+**夹爪与机械臂轮流动**（控制器的限制，G8、G9）：伺服流（`ServoJ`）进行中控制器压住 `MoveGripper` 不执行，
+夹爪运动中又压住 `ServoJ` 不执行。所以：
+
+- **机械臂静止时停发**：要发的点与上一条逐字节相同、且回读已到达（各轴 ≤ 0.01°），伺服流就停发
+  （不调 `ServoMoveEnd`，`~/status` 的 `servo_stream = paused`、`servo_queue_len` 为 0）；
+  下一条不同的命令先补 `prefill` 段原地不动的再续发，从静止起步多约 `prefill × cmdT`（24 ms）延迟（S18）
+- **夹爪命令等机械臂静止**：伺服流已停发且控制器队列为空时才发 `MoveGripper`；机械臂在动或同一周期要动时，
+  夹爪命令等着（只保留最新值）。等太久时 action 会因 `stall_timeout` ABORTED，但命令仍是控制器的当前目标，
+  机械臂停下后照样执行
+- **夹爪忙时扣住机械臂**：从发出 `MoveGripper`（或激活）到状态帧报完成（`motion_done` 先 0 后 1；1.5 s 内未见运动
+  开始按无需运动，最长 30 s），会让机械臂动的命令不执行，机械臂停在原处，**硬件不停用**
+  （`~/status` 的 `arm_commands = refused (gripper busy)`）。`MoveGripper` 调用失败（返回错误或超时）也一样只看状态帧：
+  超时的调用可能在伺服流停下后照样执行（G8）。
+  夹爪完成后，命令回到停住位置 0.01° 以内才恢复（从静止起步的新轨迹、或中止后保持实际位置的轨迹控制器都满足），
+  不会跳到被拒轨迹已走到的地方（按单周期步长限值放行的话，可以在一个周期里以最高速度跳过去）。
+  `joint_trajectory_controller` 设了路径容差（每关节 0.26 rad）和目标容差（0.005 rad、`goal_time` 0.5 s）：
+  被扣住的轨迹落后 0.26 rad 即 ABORTED，之后它保持在实际位置，命令回到停住位置。
+  夹爪完成后 2 s 内命令仍未回来（如很慢、落后不到 0.26 rad 的轨迹，或不经轨迹控制器的命令），驱动**保护停止**：
+  硬件 → `inactive`，`fault_class = 1`，`~/status` 的 message 写明原因，重新激活硬件即清除
+
+**使用约定：机械臂与夹爪不要同时命令**。等一方的 action 结束再发另一方：夹爪 action 结束再发轨迹，轨迹 action
+结束再发夹爪（MoveIt 的顺序执行即如此）。同时命令时：夹爪运动中发来的轨迹被扣住、因路径容差 ABORTED；
+夹爪完成后命令 2 s 内没回到停住位置则保护停止。恢复：重新激活硬件
+（`ros2 control set_hardware_component_state <tf_prefix>fr_robot active`），再激活轨迹控制器。
+
+**命令与开度**：
+
+- 开度与上次发出的相差 > 1 % 行程才发 `MoveGripper`（`block = 1`；`block = 0` 不阻塞且会让夹爪失去激活、报故障，G11），
+  由后台线程用独立的 20003 连接发送，只发最新值；`read()`/`write()` 不碰网络。速度、力取自 goal 的 `velocity`/`effort`：
+  速度 % = m/s ÷ 0.00044（实测 vel 20 % ≈ 22 %行程/s，按线性外推），力 % = N ÷ 1.4（满量程 140 N），
+  都限制在 1–100；goal 未给时用控制器参数 `max_velocity` 0.022 m/s（50 %）、`max_effort` 28 N（20 %，夹玻璃器皿）
+- 开度 = 状态帧的 `gripper_position` %（整数）× 0.04 m。控制器与夹爪之间通信慢：每次运动开始约 0.8 s 内帧报 0 %、
+  未完成，之后约每 0.4 s 才更新一次（G10）。帧报"0 %、未完成"时沿用上一个已知开度
+  （`~/status` 的 `gripper_position_source = held_during_motion`）；激活后（必然全开）或驱动启动时还不知道开度，
+  则报全开（`inferred_open_after_activation`）；其余为 `frame`。**未激活时**帧报 0 %，与手指实际位置无关，开度不可知：
+  驱动报全开（外轮廓最大，碰撞检查偏保守；`unknown_not_active`），激活（必然张开到满行程）后即为真。
+  **上层不要把"报全开"当作实测开度**：判断是否夹住物体须看 `gripper_position_source` 是否为 `frame`
+- 速度 = 相邻两次开度变化之差 ÷ 间隔，0.6 s 无变化即 0
+- 夹爪编号 `gripper_index`（launch 参数，默认 1）；编号 N 对应状态帧 `gripper_active` 的 bit N−1（G5）
+
+`~/status` 另有 `servo_stream`、`arm_commands`，以及 `gripper_active`、`gripper_fault`、`gripper_motion_done`、
+`gripper_busy`、`gripper_position`（%）、`gripper_command_failures`（失败的 `MoveGripper` 次数，失败原因记在日志里）。
 
 ## 用法
 
@@ -158,7 +235,7 @@ rviz2 -d $(ros2 pkg prefix fr_robot_driver)/share/fr_robot_driver/rviz/dual_cell
 ## 文件结构
 
 ```
-urdf/fr_controlled.urdf.xacro       顶层：fr_description 宏 + fr_ros2_control 宏
+urdf/fr_controlled.urdf.xacro       顶层：fr_description 宏 + 可选夹爪宏 + fr_ros2_control 宏
 urdf/fr_ros2_control.xacro          <ros2_control> 生成宏（joint 名带 tf_prefix；mock 与真机同名 fr_status/fault_class）
 src/ include/ fr_robot_driver.xml   硬件插件 FrRobotHardwareInterface（+ reset_policy.hpp）
 test/                              插件状态机测试（假控制器 + ResourceManager）

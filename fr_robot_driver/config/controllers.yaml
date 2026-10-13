@@ -37,6 +37,36 @@ controller_manager:
       - position
       - velocity
     allow_partial_joints_goal: false
+    # A goal must be reached within 0.005 rad, at most 0.5 s after the trajectory's end, and the
+    # arm must follow within 0.26 rad on the way. A trajectory the hardware refuses (the arm is held
+    # while the gripper moves) is ABORTED as soon as it is 0.26 rad ahead, and the controller then
+    # holds the actual position, which releases the hold; the driver stops if that takes more than
+    # 2 s after the gripper's end. 0.26 rad = twice the fastest joint of any model (3.2 rad/s)
+    # times the normal following lag (prefill * cmdT + round trip, about 40 ms).
     constraints:
       stopped_velocity_tolerance: 0.01
-      goal_time: 0.0
+      goal_time: 0.5
+      __PREFIX__shoulder_pan_joint: {trajectory: 0.26, goal: 0.005}
+      __PREFIX__shoulder_lift_joint: {trajectory: 0.26, goal: 0.005}
+      __PREFIX__elbow_joint: {trajectory: 0.26, goal: 0.005}
+      __PREFIX__wrist_1_joint: {trajectory: 0.26, goal: 0.005}
+      __PREFIX__wrist_2_joint: {trajectory: 0.26, goal: 0.005}
+      __PREFIX__wrist_3_joint: {trajectory: 0.26, goal: 0.005}
+
+# Spawned only with gripper:=pgi140 (fr_control.launch.py). Opening = travel of one jaw, 0 (closed)
+# to 0.04 m (open). A goal without velocity/effort gets max_velocity/max_effort: 50 % speed and
+# 20 % force of the PGI-140 (0.00044 m/s and 1.4 N per percent, see fr_robot_driver/README.md).
+"__NS__/gripper_controller":
+  ros__parameters:
+    type: "parallel_gripper_action_controller/GripperActionController"
+    joint: __PREFIX__left_finger_joint
+    max_velocity_interface: __PREFIX__left_finger_joint/max_velocity
+    max_effort_interface: __PREFIX__left_finger_joint/max_effort
+    max_velocity: 0.022
+    max_effort: 28.0
+    goal_tolerance: 0.001
+    # The opening is reported in whole percent (0.0004 m): the velocity is a difference of
+    # successive frames and stays 0 between steps, for up to about 1 s at the lowest speeds.
+    stall_velocity_threshold: 0.0002
+    stall_timeout: 2.0
+    allow_stalling: false

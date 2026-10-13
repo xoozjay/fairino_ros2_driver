@@ -28,9 +28,11 @@
        ros2_control; both must be installed for mock hardware to load. -->
   <exec_depend>ros2_control</exec_depend>
 
+  <exec_depend>gripper_dahuan_pgi140</exec_depend>
   <exec_depend>joint_state_broadcaster</exec_depend>
   <exec_depend>joint_trajectory_controller</exec_depend>
   <exec_depend>launch</exec_depend>
+  <exec_depend>parallel_gripper_controller</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>

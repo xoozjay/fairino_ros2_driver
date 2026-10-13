@@ -15,6 +15,9 @@
       allow_unknown_model, fk_check, fk_position_tolerance_mm, fk_angle_tolerance_deg:
                              real hardware only, see fr_ros2_control.xacro
       mock_gpio_commands     : mock only, a loop-back command interface on fr_status/fault_class
+      gripper                : end effector on tool0: none (default) or pgi140
+                               (gripper_dahuan_pgi140, one more joint in ros2_control)
+      gripper_index          : real hardware only, the controller's gripper number (default 1)
   -->
   <xacro:arg name="model" default="fairino20_v6"/>
   <xacro:arg name="tf_prefix" default=""/>
@@ -33,11 +36,17 @@
   <xacro:arg name="fk_check" default="true"/>
   <xacro:arg name="fk_position_tolerance_mm" default="10.0"/>
   <xacro:arg name="fk_angle_tolerance_deg" default="1.0"/>
+  <xacro:arg name="gripper" default="none"/>
+  <xacro:arg name="gripper_index" default="1"/>
 
   <xacro:include filename="$(find fr_description)/urdf/fr_macro.xacro"/>
   <xacro:include filename="$(find fr_robot_driver)/urdf/fr_ros2_control.xacro"/>
 
   <xacro:property name="tf_prefix" value="$(arg tf_prefix)"/>
+  <xacro:property name="gripper" value="$(arg gripper)"/>
+  <xacro:if value="${gripper not in ['none', 'pgi140']}">
+    ${xacro.fatal("gripper must be none or pgi140, not '" + gripper + "'")}
+  </xacro:if>
 
   <xacro:fr_robot
       tf_prefix="${tf_prefix}"
@@ -46,8 +55,15 @@
       physical_parameters_file="$(find fr_description)/config/$(arg model)/physical_parameters.yaml"
       visual_parameters_file="$(find fr_description)/config/$(arg model)/visual_parameters.yaml"/>
 
+  <xacro:if value="${gripper == 'pgi140'}">
+    <xacro:include filename="$(find gripper_dahuan_pgi140)/urdf/gripper_dahuan_pgi140_macro.xacro"/>
+    <xacro:gripper_dahuan_pgi140 tf_prefix="${tf_prefix}" parent="tool0"/>
+  </xacro:if>
+
   <xacro:fr_ros2_control
       tf_prefix="${tf_prefix}"
+      gripper="${gripper}"
+      gripper_index="$(arg gripper_index)"
       use_mock_hardware="$(arg use_mock_hardware)"
       mock_gpio_commands="$(arg mock_gpio_commands)"
       ip="$(arg ip)"

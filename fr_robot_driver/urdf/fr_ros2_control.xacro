@@ -21,6 +21,10 @@
       use_mock_hardware       : use mock_components/GenericSystem instead of real hardware (default true)
       initial_positions_file  : YAML with initial_positions map (unprefixed joint names)
       mock_sensor_commands    : mock GPIO sensor commands (default false)
+      gripper                 : none (default) or pgi140: adds the joint <tf_prefix>left_finger_joint
+                                (gripper_dahuan_pgi140) with commands position [m], max_velocity
+                                [m/s], max_effort [N] and states position, velocity
+      gripper_index           : real hardware only, the controller's gripper number (default 1)
 
     Both branches expose the same <gpio name="<tf_prefix>fr_status"> with one state interface,
     fault_class (docs/fault_handling.md section 7). With the mock, mock_gpio_commands:=true adds a
@@ -57,6 +61,30 @@
     </joint>
   </xacro:macro>
 
+  <!-- Internal helper: the gripper joint, identical for mock and real hardware. The joint limiter
+       stays off: it would turn a jump of the opening into a ramp of separate gripper commands; the
+       plugin clamps the opening to the stroke itself. -->
+  <xacro:macro name="_fr_gripper_joint" params="tf_prefix">
+    <joint name="${tf_prefix}left_finger_joint">
+      <limits enable="false"/>
+      <command_interface name="position">
+        <param name="initial_value">0.0</param>
+      </command_interface>
+      <command_interface name="max_velocity">
+        <param name="initial_value">0.0</param>
+      </command_interface>
+      <command_interface name="max_effort">
+        <param name="initial_value">0.0</param>
+      </command_interface>
+      <state_interface name="position">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+      <state_interface name="velocity">
+        <param name="initial_value">0.0</param>
+      </state_interface>
+    </joint>
+  </xacro:macro>
+
   <!-- Internal helper: the fr_status gpio, identical for mock and real hardware. -->
   <xacro:macro name="_fr_status_gpio" params="tf_prefix">
     <gpio name="${tf_prefix}fr_status">
@@ -82,6 +110,8 @@
       fk_check:='true'
       fk_position_tolerance_mm:=10.0
       fk_angle_tolerance_deg:=1.0
+      gripper:='none'
+      gripper_index:=1
       initial_positions_file">
 
     <xacro:property name="initial_positions"
@@ -114,6 +144,10 @@
           <xacro:property name="kin" value="${xacro.load_yaml(kinematics_parameters_file)}"/>
           <param name="kinematics">${';'.join([kin['kinematics'][j]['xyz'] + ' ' + kin['kinematics'][j]['rpy'] for j in ['shoulder_pan_joint', 'shoulder_lift_joint', 'elbow_joint', 'wrist_1_joint', 'wrist_2_joint', 'wrist_3_joint']])}</param>
           <param name="flange_offset">${kin['flange_offset']}</param>
+          <xacro:if value="${gripper != 'none'}">
+            <param name="gripper_joint">${tf_prefix}left_finger_joint</param>
+            <param name="gripper_index">${gripper_index}</param>
+          </xacro:if>
         </xacro:unless>
       </hardware>
 
@@ -129,6 +163,10 @@
           initial_position="${initial_positions['wrist_2_joint']}"/>
       <xacro:_fr_hw_joint joint_name="wrist_3_joint" tf_prefix="${tf_prefix}"
           initial_position="${initial_positions['wrist_3_joint']}"/>
+
+      <xacro:if value="${gripper != 'none'}">
+        <xacro:_fr_gripper_joint tf_prefix="${tf_prefix}"/>
+      </xacro:if>
 
       <xacro:_fr_status_gpio tf_prefix="${tf_prefix}"/>
 

@@ -16,6 +16,7 @@
 #include <cstring>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -120,6 +121,18 @@ public:
   std::atomic<double> flange_error_mm{0.0};
   std::atomic<bool> silent{false};        // keep the connection, stop sending frames
   std::atomic<bool> drop_state{false};    // close the state connection
+  // Gripper (sdk_quirks G5, G6, G10, G11): ActGripper clears a gripper fault and sets the active
+  // bit after gripper_activation_ms, with the frame at "0 %, not done". MoveGripper answers after
+  // move_gripper_delay_ms; the frame then says "0 %, not done" for gripper_motion_ms, after which
+  // the gripper is at the target and "done".
+  std::atomic<int> gripper_activation_ms{200};
+  std::atomic<int> move_gripper_delay_ms{0};
+  std::atomic<int> gripper_motion_ms{150};
+  // The servo queue: every ServoJ is one 8 ms segment, played in turn; the frame's mc_queue_len is
+  // what is left (plus whatever a test sets). What a real controller would hold back: MoveGripper
+  // while segments are left (G8), and ServoJ while the gripper moves (G9). Tests expect both 0.
+  std::atomic<int> move_gripper_while_streaming{0};
+  std::atomic<int> servoj_while_gripper_moves{0};
 
   // ---- observations ----
   std::vector<std::array<double, 6>> servoJ() const {std::lock_guard<std::mutex> l(m_); return servoj_;}
@@ -131,6 +144,16 @@ public:
     return n;
   }
   int stops() const {return stops_.load();}
+  // the numeric parameters of every call to `method`, in order (i4 and double alike)
+  std::vector<std::vector<double>> params(const std::string & method) const
+  {
+    std::lock_guard<std::mutex> l(m_);
+    std::vector<std::vector<double>> out;
+    for (std::size_t i = 0; i < methods_.size(); ++i) {
+      if (methods_[i] == method) {out.push_back(params_[i]);}
+    }
+    return out;
+  }
   // every XML-RPC call so far, and how many connections each port has accepted
   std::size_t xmlrpcCalls() const {std::lock_guard<std::mutex> l(m_); return methods_.size();}
   int xmlrpcConnections() const {return xmlrpc_connections_.load();}
@@ -142,6 +165,18 @@ private:
   static std::string array(const std::string & values)
   {
     return "<value><array><data>" + values + "</data></array></value>";
+  }
+  // every <i4> and <double> in the request body, in order
+  static std::vector<double> numbers(const std::string & body)
+  {
+    std::vector<double> out;
+    for (std::size_t pos = 0;;) {
+      const auto i = body.find("<i4>", pos), d = body.find("<double>", pos);
+      if (i == std::string::npos && d == std::string::npos) {return out;}
+      const bool is_int = d == std::string::npos || (i != std::string::npos && i < d);
+      pos = is_int ? i + 4 : d + 8;
+      out.push_back(std::stod(body.substr(pos)));
+    }
   }
   static std::string i4(int v) {return "<value><i4>" + std::to_string(v) + "</i4></value>";}
   static std::string str(const std::string & s) {return "<value><string>" + s + "</string></value>";}
@@ -172,6 +207,9 @@ private:
       in.erase(0, end + 4 + len);
       const auto b = body.find("<methodName>") + 12;
       const std::string method = body.substr(b, body.find("</methodName>") - b);
+      if (method == "MoveGripper") {
+        std::this_thread::sleep_for(std::chrono::milliseconds(move_gripper_delay_ms.load()));
+      }
       const std::string value = answer(method, body);
       const std::string xml = "<?xml version=\"1.0\"?><methodResponse><params><param>" + value +
         "</param></params></methodResponse>";
@@ -185,6 +223,29 @@ private:
   {
     std::lock_guard<std::mutex> l(m_);
     methods_.push_back(method);
+    params_.push_back(numbers(body));
+    const auto & p = params_.back();
+    const auto now = std::chrono::steady_clock::now();
+    if (method == "ActGripper" && p.size() == 2 && p[1] == 1) {
+      st_.gripper_fault = 0;
+      gripper_bit_ = static_cast<int>(p[0]) - 1;
+      gripper_activates_at_ = std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(gripper_activation_ms.load());
+    }
+    if (method == "MoveGripper") {
+      if (now < queue_end_) {++move_gripper_while_streaming;}
+      if (!((st_.gripper_active >> (static_cast<int>(p[0]) - 1)) & 1u)) {
+        return i4(73);   // not active: ERR_GRIPPER_MOTION (G4, G11)
+      }
+      st_.gripper_position = 0;    // G10
+      st_.gripper_motiondone = 0;
+      gripper_target_ = static_cast<uint8_t>(p[1]);
+      gripper_arrives_at_ = now + std::chrono::milliseconds(gripper_motion_ms.load());
+    }
+    if (method == "ServoJ") {
+      if (gripper_arrives_at_) {++servoj_while_gripper_moves;}
+      queue_end_ = std::max(queue_end_, now) + std::chrono::milliseconds(8);
+    }
     if (method == "GetSoftwareVersion") {
       return array(i4(0) + str(model_) + str(version_) + str("V3.8.8-LA"));
     }
@@ -232,7 +293,23 @@ private:
         fr_client_library::RobotState384 s;
         {
           std::lock_guard<std::mutex> l(m_);
+          if (gripper_activates_at_ && std::chrono::steady_clock::now() >= *gripper_activates_at_) {
+            st_.gripper_active = static_cast<uint16_t>(st_.gripper_active | (1u << gripper_bit_));
+            st_.gripper_position = 0;      // fully open, but the frame does not know (G5)
+            st_.gripper_motiondone = 0;
+            gripper_activates_at_.reset();
+          }
+          if (gripper_arrives_at_ && std::chrono::steady_clock::now() >= *gripper_arrives_at_) {
+            st_.gripper_position = gripper_target_;
+            st_.gripper_motiondone = 1;
+            gripper_arrives_at_.reset();
+          }
           s = st_;
+          const auto left = queue_end_ - std::chrono::steady_clock::now();
+          if (left > std::chrono::steady_clock::duration::zero()) {
+            s.mc_queue_len += static_cast<int32_t>((left + std::chrono::milliseconds(8) -
+              std::chrono::nanoseconds(1)) / std::chrono::milliseconds(8));
+          }
         }
         setFlange(s);
         char frame[fr_client_library::kRobotState384Size] = {};
@@ -294,6 +371,12 @@ private:
   int period_ = 8;
   std::vector<std::array<double, 6>> servoj_;
   std::vector<std::string> methods_;
+  std::vector<std::vector<double>> params_;   // per call, aligned with methods_
+  std::optional<std::chrono::steady_clock::time_point> gripper_activates_at_;
+  int gripper_bit_ = 0;
+  std::optional<std::chrono::steady_clock::time_point> gripper_arrives_at_;
+  uint8_t gripper_target_ = 0;
+  std::chrono::steady_clock::time_point queue_end_{};   // when the last queued segment is played
   std::atomic<int> stops_{0};
   std::atomic<int> xmlrpc_connections_{0}, instant_connections_{0}, state_connections_{0};
 

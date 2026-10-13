@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <iterator>
 #include <optional>
 
 #include "fr_robot_driver/reset_policy.hpp"
@@ -26,9 +27,35 @@ namespace
 {
 constexpr double kDegToRad = M_PI / 180.0;
 constexpr double kRadToDeg = 180.0 / M_PI;
+
+// ---- gripper: DH-Robotics PGI-140-80 (gripper_dahuan_pgi140) ----
+// Travel of one jaw from closed (0 %) to fully open (100 %); the URDF's left_finger_joint range.
+constexpr double kGripperStroke = 0.04;
+// m/s per percent of MoveGripper's velocity: about 22 %/s of the stroke at 20 % (sdk_quirks G6),
+// assumed linear.
+constexpr double kGripperSpeedPerPercent = kGripperStroke * 0.011;
+constexpr double kGripperForcePerPercent = 1.4;   // N per percent of MoveGripper's force: 140 N full scale
+constexpr int kGripperDefaultVelocity = 50;       // percent, when the command gives none
+constexpr int kGripperDefaultForce = 20;          // percent: gentle enough for glassware
+constexpr double kGripperDeadband = 0.01 * kGripperStroke;  // smaller changes are not sent
+constexpr double kStillDegPerS = 0.5;  // the arm counts as standing still below this joint speed
 // The arm has arrived when every joint reads back within this of the point sent (sdk_quirks S18:
 // standing, the readback stays within 0.002 deg)
 constexpr double kAtRestDeg = 0.01;
+constexpr auto kGripperActivationTimeout = std::chrono::seconds(3);
+// After the gripper is done, the held arm's command must be back at the hold position within this
+// (the trajectory controller's path tolerance aborts a held trajectory well before), or the driver
+// stops: the arm must not stay held indefinitely with nobody noticing.
+constexpr auto kHoldTimeout = std::chrono::seconds(2);
+
+// A command value [unit] as a MoveGripper percent in [1, 100]; `fallback` if it gives none (<= 0).
+int gripperPercent(double value, double per_percent, int fallback)
+{
+  if (!std::isfinite(value) || value <= 0.0) {
+    return fallback;
+  }
+  return static_cast<int>(std::clamp<long>(std::lround(value / per_percent), 1, 100));
+}
 
 }  // namespace
 
@@ -44,6 +71,7 @@ FrRobotHardwareInterface::~FrRobotHardwareInterface()
   joinCleanup();
   if (receiver_) {receiver_->stop();}   // null only if on_init failed early
   if (sender_) {sender_->stop();}
+  if (gripper_sender_) {gripper_sender_->stop();}
 }
 
 std::string FrRobotHardwareInterface::param(const std::string & key, const std::string & fallback) const
@@ -62,20 +90,39 @@ CallbackReturn FrRobotHardwareInterface::on_init(
   const auto & info = get_hardware_info();
   const auto log = get_logger();
 
-  // ---- joints: six, position command, position + velocity state, a URDF velocity limit ----
-  if (info.joints.size() != 6) {
-    RCLCPP_ERROR(log, "expected 6 joints, the URDF declares %zu", info.joints.size());
+  const auto has = [](const std::vector<hardware_interface::InterfaceInfo> & list, const std::string & n) {
+      return std::any_of(list.begin(), list.end(), [&](const auto & i) {return i.name == n;});
+    };
+
+  // ---- optional gripper joint: opening [m] commanded with max_velocity [m/s] and max_effort [N] ----
+  gripper_joint_ = param("gripper_joint", "");
+  if (hasGripper()) {
+    const auto g = std::find_if(info.joints.begin(), info.joints.end(),
+        [&](const auto & j) {return j.name == gripper_joint_;});
+    if (g == info.joints.end() || !has(g->command_interfaces, hardware_interface::HW_IF_POSITION) ||
+      !has(g->command_interfaces, "max_velocity") || !has(g->command_interfaces, "max_effort") ||
+      !has(g->state_interfaces, hardware_interface::HW_IF_POSITION) ||
+      !has(g->state_interfaces, hardware_interface::HW_IF_VELOCITY))
+    {
+      RCLCPP_ERROR(log, "gripper joint '%s': need commands 'position', 'max_velocity', 'max_effort' "
+        "and states 'position', 'velocity'", gripper_joint_.c_str());
+      return CallbackReturn::ERROR;
+    }
+  }
+
+  // ---- arm joints: six, position command, position + velocity state, a URDF velocity limit ----
+  std::vector<hardware_interface::ComponentInfo> arm_joints;
+  std::copy_if(info.joints.begin(), info.joints.end(), std::back_inserter(arm_joints),
+    [&](const auto & j) {return j.name != gripper_joint_;});
+  if (arm_joints.size() != 6) {
+    RCLCPP_ERROR(log, "expected 6 arm joints, the URDF declares %zu", arm_joints.size());
     return CallbackReturn::ERROR;
   }
-  for (const auto & joint : info.joints) {
+  for (const auto & joint : arm_joints) {
     const bool pos_cmd = joint.command_interfaces.size() == 1 &&
       joint.command_interfaces[0].name == hardware_interface::HW_IF_POSITION;
-    const auto has_state = [&](const char * n) {
-        return std::any_of(joint.state_interfaces.begin(), joint.state_interfaces.end(),
-                 [&](const auto & i) {return i.name == n;});
-      };
-    if (!pos_cmd || !has_state(hardware_interface::HW_IF_POSITION) ||
-      !has_state(hardware_interface::HW_IF_VELOCITY))
+    if (!pos_cmd || !has(joint.state_interfaces, hardware_interface::HW_IF_POSITION) ||
+      !has(joint.state_interfaces, hardware_interface::HW_IF_VELOCITY))
     {
       RCLCPP_ERROR(log, "joint '%s': need command 'position' and states 'position', 'velocity'",
         joint.name.c_str());
@@ -94,11 +141,7 @@ CallbackReturn FrRobotHardwareInterface::on_init(
   const std::string gpio_name = param("tf_prefix", "") + "fr_status";
   const auto gpio = std::find_if(info.gpios.begin(), info.gpios.end(),
       [&](const auto & g) {return g.name == gpio_name;});
-  const auto has_fault_class = [&] {
-      return std::any_of(gpio->state_interfaces.begin(), gpio->state_interfaces.end(),
-               [](const auto & i) {return i.name == "fault_class";});
-    };
-  if (gpio == info.gpios.end() || !has_fault_class()) {
+  if (gpio == info.gpios.end() || !has(gpio->state_interfaces, "fault_class")) {
     RCLCPP_ERROR(log, "the URDF needs <gpio name=\"%s\"> with the state interface 'fault_class'",
       gpio_name.c_str());
     return CallbackReturn::ERROR;
@@ -144,6 +187,7 @@ CallbackReturn FrRobotHardwareInterface::on_init(
   fk_check_ = hardware_interface::parse_bool(param("fk_check", "true"));
   fk_position_tolerance_mm_ = number("fk_position_tolerance_mm", 10.0, 0.01, 1000.0);
   fk_angle_tolerance_deg_ = number("fk_angle_tolerance_deg", 1.0, 0.001, 180.0);
+  gripper_index_ = integer("gripper_index", 1, 1, 16);   // active bit index - 1 (sdk_quirks G5)
   if (model_.empty()) {
     RCLCPP_ERROR(log, "parameter 'model' (the fr_description model, e.g. fairino5_v6) is required");
     ok = false;
@@ -207,6 +251,11 @@ CallbackReturn FrRobotHardwareInterface::on_init(
       return true;
     };
   sender_ = std::make_unique<fr_client_library::ServoSender>(ip_, xmlrpc_port_, sender_options);
+  if (hasGripper()) {
+    // Its own 20003 connection: MoveGripper never waits behind ServoJ or the services' calls.
+    gripper_sender_ = std::make_unique<fr_client_library::GripperSender>(
+      ip_, xmlrpc_port_, gripper_index_);
+  }
 
   // ---- reset_error service on the controller manager's executor (optional: no executor in tests)
   executor_ = params.executor;
@@ -216,6 +265,14 @@ CallbackReturn FrRobotHardwareInterface::on_init(
       "~/reset_error",
       [this](const std::shared_ptr<std_srvs::srv::Trigger::Request> req,
       std::shared_ptr<std_srvs::srv::Trigger::Response> res) {onResetRequest(req, res);});
+    if (hasGripper()) {
+      gripper_group_ = node_->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+      gripper_activate_service_ = node_->create_service<std_srvs::srv::Trigger>(
+        "~/gripper/activate",
+        [this](const std::shared_ptr<std_srvs::srv::Trigger::Request> req,
+        std::shared_ptr<std_srvs::srv::Trigger::Response> res) {onGripperActivate(req, res);},
+        rclcpp::ServicesQoS(), gripper_group_);
+    }
     // `~/status`: lives as long as this node, whatever the hardware's lifecycle state is
     status_tracker_.identify(info.name, ip_);
     status_pub_ = node_->create_publisher<diagnostic_msgs::msg::DiagnosticStatus>(
@@ -236,7 +293,7 @@ CallbackReturn FrRobotHardwareInterface::on_configure(const rclcpp_lifecycle::St
   closeConnections();
   fault_class_ = FaultClass::None;
   comm_reason_ = CommReason::None;
-  step_fault_ = false;
+  protective_stop_ = ProtectiveStop::None;
   logged_class_ = FaultClass::None;
   frame_ = StateSnapshot{};
 
@@ -345,6 +402,18 @@ CallbackReturn FrRobotHardwareInterface::on_configure(const rclcpp_lifecycle::St
       return CallbackReturn::FAILURE;
     }
 
+    if (hasGripper()) {
+      if (!gripper_sender_->start()) {
+        RCLCPP_ERROR(log, "cannot connect to %s:%d (XML-RPC, gripper)", ip_.c_str(), xmlrpc_port_);
+        closeConnections();
+        return CallbackReturn::FAILURE;
+      }
+      StateSnapshot snap;
+      receiver_->latest(snap);
+      RCLCPP_INFO(log, "gripper %d: %s, position %u %%, motion done %u, fault %u", gripper_index_,
+        gripperActive(snap.state) ? "active" : "NOT active (activate with ~/gripper/activate)",
+        snap.state.gripper_position, snap.state.gripper_motiondone, snap.state.gripper_fault);
+    }
   } catch (const std::exception & e) {
     RCLCPP_ERROR(log, "configure failed: %s", e.what());
     closeConnections();
@@ -403,9 +472,20 @@ CallbackReturn FrRobotHardwareInterface::on_activate(const rclcpp_lifecycle::Sta
         "limit); running with the normal scheduler", rt_priority_);
     }
   }
+  if (hasGripper()) {
+    // nothing is sent until gripper_controller starts claiming the opening (perform_command_mode_switch)
+    disarmGripper(nullptr);
+    gripper_busy_ = GripperBusy::Idle;
+    stream_idle_frames_ = 0;
+    GripperSource source;
+    set_command(gripper_joint_ + "/" + hardware_interface::HW_IF_POSITION,
+      gripperOpening(snap.state, source));
+  }
+  arm_held_ = false;
+  held_after_gripper_since_ = {};
   last_cmd_deg_ = actual;
   write_count_ = 0;
-  step_fault_ = false;
+  protective_stop_ = ProtectiveStop::None;
   active_ = true;
   setHardwareState(HardwareState::Active);
   RCLCPP_INFO(log, "activated");
@@ -418,8 +498,10 @@ CallbackReturn FrRobotHardwareInterface::on_deactivate(const rclcpp_lifecycle::S
   active_ = false;
   setHardwareState(HardwareState::Inactive);
   sender_->halt();
+  if (hasGripper()) {disarmGripper(nullptr);}
   // With a fault the firmware stops by itself; otherwise flush its queue with STOP first (S15, S16).
-  startCleanup(fault_class_.load() == FaultClass::None && !step_fault_.load(), false);
+  startCleanup(fault_class_.load() == FaultClass::None &&
+    protective_stop_.load() == ProtectiveStop::None, false);
   return CallbackReturn::SUCCESS;
 }
 
@@ -448,6 +530,7 @@ CallbackReturn FrRobotHardwareInterface::on_error(const rclcpp_lifecycle::State 
   configured_ = false;
   setHardwareState(HardwareState::Unconfigured);
   sender_->halt();
+  if (hasGripper()) {disarmGripper(nullptr);}
   startCleanup(false, true);
   return CallbackReturn::SUCCESS;  // -> UNCONFIGURED
 }
@@ -540,7 +623,24 @@ void FrRobotHardwareInterface::publishDiagnostics()
   StatusInput in;
   in.hardware = hardware_state_.load();
   in.comm = comm_reason_.load();
-  in.step_fault = step_fault_.load();
+  in.protective_stop = protective_stop_.load();
+  in.stream_paused = active_.load() && sender_->paused();
+  in.arm_held = arm_held_.load();
+  if (hasGripper()) {
+    in.gripper.present = true;
+    in.gripper.index = gripper_index_;
+    in.gripper.source = gripper_source_.load();
+    in.gripper.armed = gripper_armed_.load();
+    in.gripper.busy = gripper_busy_.load() != GripperBusy::Idle;
+    const auto g = gripper_sender_->stats();
+    in.gripper.command_failures = g.failed;
+    if (g.failed > gripper_failures_logged_) {
+      RCLCPP_ERROR(get_logger(), "MoveGripper failed (error %d, code %d %s); %lu failure(s) so far",
+        static_cast<int>(g.last_failure.error), g.last_failure.code, g.last_failure.message.c_str(),
+        static_cast<unsigned long>(g.failed));
+      gripper_failures_logged_ = g.failed;
+    }
+  }
 
   StateSnapshot snap;
   if (receiver_->latest(snap)) {
@@ -569,6 +669,7 @@ void FrRobotHardwareInterface::closeConnections()
 {
   configured_ = false;
   sender_->stop();
+  if (gripper_sender_) {gripper_sender_->stop();}
   receiver_->stop();
   instant_->disconnect();
   std::lock_guard<std::mutex> lock(api_mutex_);
@@ -619,11 +720,14 @@ return_type FrRobotHardwareInterface::read(const rclcpp::Time &, const rclcpp::D
 
   const RobotState384 & s = snap.state;
 
-  const Fault fault = effectiveFault(s, step_fault_.load());
+  const Fault fault = effectiveFault(s, protective_stop_.load());
   const FaultClass fc = fault.fault_class;
   fault_class_ = fc;
   publishJoints(s);
   set_state(fault_class_interface_, static_cast<double>(fc));
+  if (hasGripper()) {
+    readGripper(snap, fc);
+  }
   if (active_.load() && fc != FaultClass::None) {
     sender_->halt();  // stop at once; write() answers DEACTIVATE
   }
@@ -638,7 +742,18 @@ return_type FrRobotHardwareInterface::write(const rclcpp::Time &, const rclcpp::
   }
   if (fault_class_.load() != FaultClass::None) {
     sender_->halt();
+    if (hasGripper()) {disarmGripper(nullptr);}
     return return_type::DEACTIVATE;  // -> INACTIVE; the operator resets and reactivates (F3)
+  }
+  if (hasGripper()) {
+    // the arm goes first: a gripper motion never starts in a cycle in which the arm is asked to move
+    bool arm_moves = false;
+    for (int i = 0; i < 6; ++i) {
+      arm_moves = arm_moves ||
+        get_command<double>(joint_names_[i] + "/" + hardware_interface::HW_IF_POSITION) * kRadToDeg !=
+        last_cmd_deg_[i];
+    }
+    writeGripper(arm_moves);
   }
   if (write_count_++ % static_cast<unsigned long>(ratio_) != 0) {
     return return_type::OK;  // controller runs faster than cmdT: only every ratio_-th cycle is a segment
@@ -648,6 +763,45 @@ return_type FrRobotHardwareInterface::write(const rclcpp::Time &, const rclcpp::
   for (int i = 0; i < 6; ++i) {
     target[i] = get_command<double>(joint_names_[i] + "/" + hardware_interface::HW_IF_POSITION) * kRadToDeg;
   }
+  // While the gripper is busy the arm stays where it is (sdk_quirks G9): a command that would move
+  // it is refused, without deactivating. Afterwards it is taken up again only once it is back where
+  // the arm stands (kAtRestDeg), as a trajectory that starts from rest or a controller holding the
+  // actual position is. Anything wider lets the arm jump to where a refused trajectory got to: one
+  // step limit is the URDF's top speed for a whole cycle. If it is not back within kHoldTimeout of
+  // the gripper's end, the driver stops (a protective stop) rather than hold the arm indefinitely.
+  const bool gripper_busy = hasGripper() && gripper_busy_.load() != GripperBusy::Idle;
+  if (gripper_busy || arm_held_.load()) {
+    bool near = true;
+    for (int i = 0; i < 6; ++i) {
+      near = near && std::isfinite(target[i]) && std::abs(target[i] - last_cmd_deg_[i]) <= kAtRestDeg;
+    }
+    const bool moves = target != last_cmd_deg_;
+    if ((gripper_busy && moves) || (!gripper_busy && !near)) {
+      if (!arm_held_.exchange(true)) {
+        RCLCPP_WARN(get_logger(), "arm command refused: the gripper is %s; the arm stays where it is "
+          "until the command is back there", gripper_busy ? "busy" : "done but the command has moved "
+          "on");
+      }
+      const auto now = std::chrono::steady_clock::now();
+      if (gripper_busy) {
+        held_after_gripper_since_ = {};
+      } else if (held_after_gripper_since_ == std::chrono::steady_clock::time_point{}) {
+        held_after_gripper_since_ = now;
+      } else if (now - held_after_gripper_since_ > kHoldTimeout) {
+        RCLCPP_ERROR(get_logger(), "protective stop: %s", toString(ProtectiveStop::HoldTimeout));
+        protective_stop_ = ProtectiveStop::HoldTimeout;
+        fault_class_ = FaultClass::RobotFault;
+        sender_->halt();
+        return return_type::DEACTIVATE;
+      }
+      target = last_cmd_deg_;
+    } else {
+      held_after_gripper_since_ = {};
+      if (arm_held_.exchange(false)) {
+        RCLCPP_INFO(get_logger(), "arm commands accepted again");
+      }
+    }
+  }
   // Step check (docs/fault_handling.md 6): the firmware only limits speed/acceleration/range itself
   // (sdk_quirks S14) and a violation puts the robot in a fault (S11).
   for (int i = 0; i < 6; ++i) {
@@ -655,7 +809,7 @@ return_type FrRobotHardwareInterface::write(const rclcpp::Time &, const rclcpp::
       RCLCPP_ERROR(get_logger(), "command refused: joint %s asks for %.3f deg after %.3f deg in one "
         "%d ms step (limit %.3f deg)", joint_names_[i].c_str(), target[i], last_cmd_deg_[i],
         cmd_t_ms_, max_step_deg_[i]);
-      step_fault_ = true;
+      protective_stop_ = ProtectiveStop::StepLimit;
       fault_class_ = FaultClass::RobotFault;
       sender_->halt();
       return return_type::DEACTIVATE;
@@ -669,6 +823,238 @@ return_type FrRobotHardwareInterface::write(const rclcpp::Time &, const rclcpp::
   }
   last_cmd_deg_ = target;
   return return_type::OK;
+}
+
+// ---- gripper ----
+
+bool FrRobotHardwareInterface::gripperActive(const RobotState384 & s) const
+{
+  return (s.gripper_active >> (gripper_index_ - 1)) & 1u;   // gripper 1 is bit 0 (sdk_quirks G5)
+}
+
+double FrRobotHardwareInterface::gripperOpening(const RobotState384 & s, GripperSource & source) const
+{
+  // The frame says 0 % and "not done" while a motion starts (the gripper link is slow, G10) and
+  // after an activation until the first motion (G5): keep the last known opening then; with none,
+  // or after an activation (which always opens fully, G2), report fully open.
+  if (!gripperActive(s)) {
+    // Not active: the frame says 0 % whatever the fingers do (G1, G11). Report the widest outline
+    // for collision checking; the activation that has to come first opens it fully anyway.
+    source = GripperSource::UnknownNotActive;
+    return kGripperStroke;
+  }
+  if (s.gripper_motiondone == 0 && s.gripper_position == 0) {
+    if (gripper_known_ >= 0.0 && !gripper_known_from_activation_) {
+      source = GripperSource::HeldDuringMotion;
+      return gripper_known_;
+    }
+    source = GripperSource::InferredOpenAfterActivation;
+    return kGripperStroke;
+  }
+  source = GripperSource::Frame;
+  return std::min<int>(s.gripper_position, 100) / 100.0 * kGripperStroke;
+}
+
+void FrRobotHardwareInterface::readGripper(const StateSnapshot & snap, FaultClass fc)
+{
+  const RobotState384 & s = snap.state;
+  const bool active = gripperActive(s);
+  if (active && !gripper_was_active_ && gripper_known_ >= 0.0) {
+    gripper_known_from_activation_ = true;   // activated meanwhile: it opened fully
+  }
+  gripper_was_active_ = active;
+
+  // The motion we sent: done once the frame has shown "not done" and then "done" again. A failed
+  // MoveGripper call (an error, or no answer in time) does not count: the controller may still run
+  // it, e.g. once the servo stream stops (sdk_quirks G8), so only the frame says it is over.
+  if (gripper_busy_.load() == GripperBusy::Moving) {
+    const auto since = std::chrono::steady_clock::now() - gripper_posted_at_;
+    gripper_seen_running_ = gripper_seen_running_ || s.gripper_motiondone == 0;
+    const bool done = gripper_seen_running_ && s.gripper_motiondone == 1;
+    const bool never_started = !gripper_seen_running_ && since > std::chrono::milliseconds(1500);
+    const bool timed_out = since > std::chrono::seconds(30);
+    if (timed_out) {
+      RCLCPP_ERROR(get_logger(), "gripper motion not done after 30 s; arm commands accepted again");
+    }
+    if (done || never_started || timed_out) {
+      auto moving = GripperBusy::Moving;
+      gripper_busy_.compare_exchange_strong(moving, GripperBusy::Idle);
+    }
+  }
+
+  GripperSource source = GripperSource::Frame;
+  const double opening = gripperOpening(s, source);
+  if (source == GripperSource::Frame) {
+    gripper_known_ = opening;
+    gripper_known_from_activation_ = false;
+  }
+  // The frame's opening changes in steps about 0.4 s apart (G10): the velocity is the last step
+  // over its interval, and 0 once nothing has changed for a while.
+  const auto t = snap.received_at;
+  if (gripper_reported_ < 0.0) {
+    gripper_reported_ = opening;
+    gripper_changed_at_ = t;
+  } else if (opening != gripper_reported_) {
+    const double dt = std::chrono::duration<double>(t - gripper_changed_at_).count();
+    gripper_velocity_ = (opening - gripper_reported_) / std::clamp(dt, 0.008, 0.5);
+    gripper_reported_ = opening;
+    gripper_changed_at_ = t;
+  } else if (t - gripper_changed_at_ > std::chrono::milliseconds(600)) {
+    gripper_velocity_ = 0.0;
+  }
+  set_state(gripper_joint_ + "/" + hardware_interface::HW_IF_POSITION, opening);
+  set_state(gripper_joint_ + "/" + hardware_interface::HW_IF_VELOCITY, gripper_velocity_);
+  gripper_source_ = source;
+  gripper_usable_ = active && s.gripper_fault == 0 && fc == FaultClass::None;
+  // MoveGripper only runs while no ServoJ flows (G8): the stream paused and the queue drained
+  const bool idle = sender_->paused() && fr_client_library::servoQueueLength(s) == 0;
+  stream_idle_frames_ = idle ? stream_idle_frames_ + 1 : 0;
+}
+
+void FrRobotHardwareInterface::writeGripper(bool arm_moves)
+{
+  if (!gripper_armed_.load()) {
+    return;
+  }
+  if (!gripper_usable_.load()) {
+    disarmGripper("the gripper is not active or reports a fault");
+    return;
+  }
+  const double cmd = get_command<double>(gripper_joint_ + "/" + hardware_interface::HW_IF_POSITION);
+  if (!std::isfinite(cmd)) {
+    return;
+  }
+  const double target = std::clamp(cmd, 0.0, kGripperStroke);
+  if (std::abs(target - gripper_last_sent_) <= kGripperDeadband) {
+    return;
+  }
+  // The newest command waits: for the motion in progress, and for the arm to stand (G8, G9)
+  if (gripper_busy_.load() != GripperBusy::Idle || stream_idle_frames_ < 2 || arm_moves) {
+    return;
+  }
+  fr_client_library::GripperCommand c;
+  c.position = static_cast<int>(std::lround(target / kGripperStroke * 100.0));
+  c.velocity = gripperPercent(get_command<double>(gripper_joint_ + "/max_velocity"),
+    kGripperSpeedPerPercent, kGripperDefaultVelocity);
+  c.force = gripperPercent(get_command<double>(gripper_joint_ + "/max_effort"),
+    kGripperForcePerPercent, kGripperDefaultForce);
+  if (gripper_sender_->post(c)) {   // never blocks; busy this instant: again next cycle
+    gripper_last_sent_ = target;
+    gripper_posted_at_ = std::chrono::steady_clock::now();
+    gripper_seen_running_ = false;
+    gripper_busy_ = GripperBusy::Moving;
+  }
+}
+
+void FrRobotHardwareInterface::disarmGripper(const char * why)
+{
+  const bool was = gripper_armed_.exchange(false);
+  if (gripper_sender_) {gripper_sender_->discard();}
+  if (was && why) {
+    RCLCPP_WARN(get_logger(), "gripper commands ignored: %s; restart gripper_controller once the "
+      "gripper is usable again", why);
+  }
+}
+
+return_type FrRobotHardwareInterface::perform_command_mode_switch(
+  const std::vector<std::string> & start_interfaces,
+  const std::vector<std::string> & stop_interfaces)
+{
+  if (!hasGripper()) {
+    return return_type::OK;
+  }
+  const std::string opening = gripper_joint_ + "/" + hardware_interface::HW_IF_POSITION;
+  const auto contains = [&](const std::vector<std::string> & v) {
+      return std::find(v.begin(), v.end(), opening) != v.end();
+    };
+  if (contains(stop_interfaces)) {
+    disarmGripper(nullptr);
+  }
+  if (contains(start_interfaces)) {
+    if (active_.load() && gripper_usable_.load()) {
+      // The controller starts from the reported opening: nothing moves until it asks for another.
+      const double now = get_state<double>(opening);
+      set_command(opening, now);
+      gripper_last_sent_ = now;
+      gripper_armed_ = true;
+      RCLCPP_INFO(get_logger(), "gripper commands armed");
+    } else {
+      RCLCPP_WARN(get_logger(), "gripper commands ignored: a controller claimed the gripper while "
+        "it is not usable (not active, or a fault); restart the controller once it is");
+    }
+  }
+  return return_type::OK;
+}
+
+void FrRobotHardwareInterface::onGripperActivate(
+  const std::shared_ptr<std_srvs::srv::Trigger::Request>,
+  std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+{
+  const auto log = get_logger();
+  const auto refuse = [&](const std::string & why) {
+      response->success = false;
+      response->message = why;
+      RCLCPP_WARN(log, "gripper activation refused: %s", why.c_str());
+    };
+  std::lock_guard<std::mutex> lock(api_mutex_);   // its own XML-RPC connection, as reset_error
+  StateSnapshot snap;
+  if (!configured_.load()) {
+    return refuse("hardware not configured");
+  }
+  receiver_->latest(snap);
+  if (!snap.fresh(comm_timeout_)) {
+    return refuse("no fresh state frame");
+  }
+  const RobotState384 & s = snap.state;
+  if (const FaultClass fc = fr_client_library::classifyState(s); fc != FaultClass::None) {
+    return refuse(std::string(fr_client_library::toString(fc)) + ": " +
+             fr_client_library::describeFault(s));
+  }
+  if (const ProtectiveStop stop = protective_stop_.load(); stop != ProtectiveStop::None) {
+    return refuse(toString(stop));
+  }
+  // A gripper fault is no reason to refuse: activating is what clears it (sdk_quirks G11)
+  if (gripperActive(s)) {
+    return refuse("gripper " + std::to_string(gripper_index_) + " is already active");
+  }
+  for (int i = 0; i < 6; ++i) {
+    if (std::abs(s.actual_qd[i]) > kStillDegPerS) {
+      return refuse("the arm is moving");
+    }
+  }
+  // While ServoJ flows the controller holds gripper commands back (sdk_quirks G8)
+  if (active_.load() && !sender_->paused()) {
+    return refuse("the arm is being commanded (servo stream running)");
+  }
+  auto idle = GripperBusy::Idle;
+  if (!gripper_busy_.compare_exchange_strong(idle, GripperBusy::Activating)) {
+    return refuse("the gripper is moving");
+  }
+  // From here the arm is kept still until the activation is over (G9)
+
+  RCLCPP_WARN(log, "activating gripper %d: it opens to its full stroke", gripper_index_);
+  bool ok = false;
+  if (const auto st = api_->actGripper(gripper_index_); !st.ok()) {
+    refuse("ActGripper failed (error " + std::to_string(static_cast<int>(st.error)) +
+      ", code " + std::to_string(st.code) + ")");
+  } else {
+    const auto deadline = std::chrono::steady_clock::now() + kGripperActivationTimeout;
+    while (!ok && std::chrono::steady_clock::now() < deadline) {
+      ok = receiver_->latest(snap) && gripperActive(snap.state) && snap.state.gripper_fault == 0;
+      if (!ok) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+      }
+    }
+    if (ok) {
+      response->success = true;
+      response->message = "gripper " + std::to_string(gripper_index_) + " active (fully open); "
+        "(re)start gripper_controller to command it";
+      RCLCPP_INFO(log, "%s", response->message.c_str());
+    } else {
+      refuse("ActGripper was accepted but the gripper did not report active within 3 s");
+    }
+  }
+  gripper_busy_ = GripperBusy::Idle;
 }
 
 void FrRobotHardwareInterface::onResetRequest(

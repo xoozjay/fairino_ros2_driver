@@ -145,15 +145,19 @@ TEST(StatusReport, EmergencyStopStaysDistinctFromARobotFault)
   EXPECT_EQ(value(t.status(), "estop"), "1");
 }
 
-TEST(StatusReport, OurOwnStepCheckIsARobotFaultUntilTheNextActivation)
+TEST(StatusReport, OurOwnProtectiveStopIsARobotFaultWithItsReason)
 {
   StatusTracker t;
   auto in = healthy(HardwareState::Inactive);
-  in.step_fault = true;
+  in.protective_stop = ProtectiveStop::StepLimit;
   t.update(in, t0);
   EXPECT_EQ(value(t.status(), "fault_class"), "1");
   EXPECT_EQ(value(t.status(), "main_code"), "0");
   EXPECT_NE(t.status().message.find("step check"), std::string::npos);
+  in.protective_stop = ProtectiveStop::HoldTimeout;
+  t.update(in, t0);
+  EXPECT_EQ(value(t.status(), "fault_class"), "1");
+  EXPECT_NE(t.status().message.find("gripper finished"), std::string::npos) << t.status().message;
 }
 
 TEST(StatusReport, AServoStreamFailureIsACommunicationFaultEvenWithFrames)

@@ -45,31 +45,81 @@ inline const char * toString(CommReason r)
   return "?";
 }
 
-// The fault to act on and report: the frame's, or RobotFault for the driver's own protective stop
-// (a command refused by the step check), which stays until the next activation.
+// Where the reported gripper opening comes from. The frame says 0 % while a motion starts and
+// after an activation (sdk_quirks G5, G10): then the last known opening is kept, or fully open.
+// While the gripper is not active the frame says 0 % whatever the fingers do (G1, G11): fully open
+// is reported, the widest outline, so that collision checking errs on the safe side.
+enum class GripperSource { Frame, HeldDuringMotion, InferredOpenAfterActivation, UnknownNotActive };
+
+inline const char * toString(GripperSource s)
+{
+  switch (s) {
+    case GripperSource::Frame: return "frame";
+    case GripperSource::HeldDuringMotion: return "held_during_motion";
+    case GripperSource::InferredOpenAfterActivation: return "inferred_open_after_activation";
+    case GripperSource::UnknownNotActive: return "unknown_not_active";
+  }
+  return "?";
+}
+
+// The driver's own protective stop: it refused the arm's commands and deactivated the hardware.
+// The robot itself reports nothing; this stays until the next activation.
+enum class ProtectiveStop
+{
+  None,
+  StepLimit,    // a command asked for more than one step limit (URDF velocity limit * cmdT)
+  HoldTimeout,  // after the gripper finished, the held arm's command did not come back in time
+};
+
+inline const char * toString(ProtectiveStop s)
+{
+  switch (s) {
+    case ProtectiveStop::None: return "none";
+    case ProtectiveStop::StepLimit: return "a command was refused by the step check";
+    case ProtectiveStop::HoldTimeout: return "the arm command did not return to where the arm was "
+             "held within 2 s after the gripper finished (arm and gripper commanded at once)";
+  }
+  return "?";
+}
+
+// The fault to act on and report: the frame's, or RobotFault for the driver's own protective stop.
 struct Fault
 {
   fr_client_library::FaultClass fault_class = fr_client_library::FaultClass::None;
   std::string detail;
 };
 
-inline Fault effectiveFault(const fr_client_library::RobotState384 & s, bool step_fault)
+inline Fault effectiveFault(const fr_client_library::RobotState384 & s, ProtectiveStop stop)
 {
   const auto fc = fr_client_library::classifyState(s);
-  if (fc == fr_client_library::FaultClass::None && step_fault) {
-    return {fr_client_library::FaultClass::RobotFault, "a command was refused by the step check"};
+  if (fc == fr_client_library::FaultClass::None && stop != ProtectiveStop::None) {
+    return {fr_client_library::FaultClass::RobotFault, toString(stop)};
   }
   return {fc, fr_client_library::describeFault(s)};
 }
+
+// The end-effector gripper, if the hardware has one (gripper_joint parameter).
+struct GripperStatusInput
+{
+  bool present = false;
+  int index = 1;                  // the controller's gripper number; its active bit is index - 1
+  GripperSource source = GripperSource::Frame;
+  bool armed = false;             // gripper_controller's commands are passed on
+  bool busy = false;              // moving or activating: the arm is kept still
+  uint64_t command_failures = 0;  // MoveGripper calls that failed
+};
 
 struct StatusInput
 {
   HardwareState hardware = HardwareState::Unconfigured;
   CommReason comm = CommReason::None;
-  bool step_fault = false;                 // our own step check refused a command
+  ProtectiveStop protective_stop = ProtectiveStop::None;
   bool link_up = false;                    // frames are arriving; `frame` is valid
   fr_client_library::RobotState384 frame{};
   long frame_age_ms = -1;                  // age of the newest frame ever received; -1: none
+  bool stream_paused = false;              // active, and no ServoJ is sent because the arm stands
+  bool arm_held = false;                   // arm commands are refused while the gripper is busy
+  GripperStatusInput gripper;
 };
 
 // "2026-10-12T08:15:30.123Z"
@@ -103,7 +153,8 @@ public:
     uint8_t level = Status::OK;
     std::string message = "ok";
     if (in.link_up && !servo_failed) {
-      const Fault f = effectiveFault(in.frame, in.step_fault && in.hardware != HardwareState::Unconfigured);
+      const Fault f = effectiveFault(in.frame,
+          in.hardware != HardwareState::Unconfigured ? in.protective_stop : ProtectiveStop::None);
       fc = f.fault_class;
       if (fc != FaultClass::None) {
         level = Status::ERROR;
@@ -160,8 +211,24 @@ public:
     add("safety_stop1", frame(std::to_string(f.safety_stop1_state)));
     add("hardware_state", toString(in.hardware));
     add("link", in.link_up ? "up" : "down");
+    add("servo_stream", in.hardware != HardwareState::Active ? "off" :
+      in.stream_paused ? "paused" : "streaming");
+    add("arm_commands", in.arm_held ? "refused (gripper busy)" : "accepted");
+    const auto & g = in.gripper;
+    if (g.present) {
+      add("gripper_active", frame(((f.gripper_active >> (g.index - 1)) & 1u) ? "1" : "0"));
+      add("gripper_fault", frame(std::to_string(f.gripper_fault)));
+      add("gripper_motion_done", frame(std::to_string(f.gripper_motiondone)));
+      add("gripper_position_source", toString(g.source));
+      add("gripper_commands", g.armed ? "armed" : "not armed");
+      add("gripper_busy", g.busy ? "1" : "0");
+      add("gripper_command_failures", std::to_string(g.command_failures));
+    }
     const std::size_t stable = s.values.size();   // everything above decides "changed"
     add("servo_queue_len", frame(std::to_string(fr_client_library::servoQueueLength(f))));
+    if (g.present) {
+      add("gripper_position", frame(std::to_string(f.gripper_position)));   // percent, as the frame says
+    }
     add("last_frame_age_ms", in.frame_age_ms < 0 ? "none" : std::to_string(in.frame_age_ms));
     add("since", since_);
     add("previous", previous_);

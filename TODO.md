@@ -17,6 +17,7 @@
 - [ ] 状态帧新鲜度只看接收时间，不查 `frame_cnt` 递增：控制器发合法但帧号冻结的帧时漏判（风险极低）
       —— done when: 决定是否在 `read()` 里加帧号检查
 - [ ] 真机双机（`dual_fr_cell.launch.py`，显式 `alice_ip` / `bob_ip`）—— done when: 两台真机跑通
+- [ ] 整条轨迹交给控制器执行（对标 UR 的 `passthrough_trajectory_controller`；3.8.4 候选 `NewSpline*`、`LoadTrajectoryJ`/`MoveTrajectoryJ`）—— done when: 评估精度、延迟与中止语义后决定是否立计划
 
 ### 规划层（fr_moveit_config）
 
@@ -27,6 +28,7 @@
 
 ### 单元组合层
 
+- [ ] 空闲停发 / 恢复与夹爪轮流动时的异响 —— done when: 用较大、较快的机械臂运动实测（小幅轨迹听不出）
 - [ ] 工作台场景升级为完整单元（对标 `my_robot_cell` / `my_dual_robot_cell`）
 - [ ] 评估 Gazebo / Ignition 仿真路线（当前只有 mock）
 

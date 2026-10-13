@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "fr_client_library/fault_state.hpp"
+#include "fr_client_library/gripper_sender.hpp"
 #include "fr_client_library/instant_command.hpp"
 #include "fr_client_library/robot_api.hpp"
 #include "fr_client_library/robot_model.hpp"
@@ -29,6 +30,8 @@
 
 namespace fr_robot_driver
 {
+enum class GripperBusy { Idle, Moving, Activating };
+
 class FrRobotHardwareInterface : public hardware_interface::SystemInterface
 {
 public:
@@ -46,6 +49,11 @@ public:
     const rclcpp::Time & time, const rclcpp::Duration & period) override;
   hardware_interface::return_type write(
     const rclcpp::Time & time, const rclcpp::Duration & period) override;
+  // Runs on the realtime thread between cycles, when a controller starts or stops claiming our
+  // command interfaces: arms and disarms the gripper commands.
+  hardware_interface::return_type perform_command_mode_switch(
+    const std::vector<std::string> & start_interfaces,
+    const std::vector<std::string> & stop_interfaces) override;
 
 private:
   using JointArray = fr_client_library::JointArray;
@@ -69,6 +77,18 @@ private:
   void publishDiagnostics();
   void setHardwareState(HardwareState s) {hardware_state_ = s;}
   void onResetRequest(
+    const std::shared_ptr<std_srvs::srv::Trigger::Request>,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+
+  // ---- gripper (sdk_quirks G1-G7) ----
+  bool hasGripper() const {return !gripper_joint_.empty();}
+  bool gripperActive(const fr_client_library::RobotState384 & s) const;
+  // The opening [m] to report for this frame, and where it comes from (GripperSource).
+  double gripperOpening(const fr_client_library::RobotState384 & s, GripperSource & source) const;
+  void readGripper(const fr_client_library::StateSnapshot & snap, fr_client_library::FaultClass fc);
+  void writeGripper(bool arm_moves);
+  void disarmGripper(const char * why);  // realtime thread; why == nullptr: quietly
+  void onGripperActivate(
     const std::shared_ptr<std_srvs::srv::Trigger::Request>,
     std::shared_ptr<std_srvs::srv::Trigger::Response> response);
 
@@ -109,7 +129,7 @@ private:
   std::atomic<bool> configured_{false};
   std::atomic<bool> active_{false};
   std::atomic<fr_client_library::FaultClass> fault_class_{fr_client_library::FaultClass::None};
-  std::atomic<bool> step_fault_{false};  // a command was refused by the step check; cleared on activation
+  std::atomic<ProtectiveStop> protective_stop_{ProtectiveStop::None};  // cleared on activation
   std::thread cleanup_thread_;
   std::mutex stop_mutex_;                // with stop_cv_: wakes monitorLink() when joinCleanup() asks to end
   std::condition_variable stop_cv_;
@@ -123,15 +143,51 @@ private:
   unsigned long write_count_ = 0;
   std::chrono::steady_clock::duration comm_timeout_{};
 
+  // ---- gripper (optional: the gripper_joint parameter names its joint) ----
+  std::string gripper_joint_;
+  int gripper_index_ = 1;
+  std::unique_ptr<fr_client_library::GripperSender> gripper_sender_;
+  // Commands are passed on only while armed: gripper_controller started claiming the opening
+  // while the gripper was usable, and it has stayed usable since. So a command left over from
+  // before the activation, a fault or a deactivation is never sent.
+  std::atomic<bool> gripper_armed_{false};
+  std::atomic<bool> gripper_usable_{false};    // active, no gripper fault, no robot fault (read())
+  std::atomic<GripperSource> gripper_source_{GripperSource::Frame};
+  // Moving: set by write() when a MoveGripper goes out, cleared by read() once the frame shows it
+  // done. Activating: set and cleared by the activation service. Either way the arm stays still
+  // (sdk_quirks G9) and the next gripper command waits.
+  std::atomic<GripperBusy> gripper_busy_{GripperBusy::Idle};
+  // realtime thread only:
+  double gripper_last_sent_ = 0.0;   // m
+  std::chrono::steady_clock::time_point gripper_posted_at_{};
+  bool gripper_seen_running_ = false;      // the frame showed motion_done = 0 since the post
+  int stream_idle_frames_ = 0;             // consecutive reads: stream paused, firmware queue empty
+  double gripper_known_ = -1.0;            // last opening [m] the frame reported; -1: none yet
+  bool gripper_known_from_activation_ = false;
+  bool gripper_was_active_ = false;
+  double gripper_reported_ = -1.0;         // the opening last reported, for the velocity
+  double gripper_velocity_ = 0.0;
+  std::chrono::steady_clock::time_point gripper_changed_at_{};
+  // The arm is held where it stands: a command that moved it came while the gripper was busy, and
+  // the command has not come back to the hold position since.
+  std::atomic<bool> arm_held_{false};
+  // realtime thread only: since when the arm has been held with the gripper no longer busy; the
+  // epoch while it is not
+  std::chrono::steady_clock::time_point held_after_gripper_since_{};
+
   // ---- reset service (lives on the controller manager's executor) ----
   rclcpp::Node::SharedPtr node_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_service_;
+  // `~/gripper/activate`, in its own callback group: it waits up to 3 s for the activation
+  rclcpp::CallbackGroup::SharedPtr gripper_group_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr gripper_activate_service_;
   rclcpp::Executor::WeakPtr executor_;
 
   // ---- status topic `~/status` (same node; read()/write() never publish) ----
   rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticStatus>::SharedPtr status_pub_;
   rclcpp::TimerBase::SharedPtr status_timer_;
   StatusTracker status_tracker_;  // only touched by the timer callback
+  uint64_t gripper_failures_logged_ = 0;  // likewise
   std::chrono::steady_clock::time_point status_published_at_{};
 };
 

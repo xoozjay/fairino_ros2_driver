@@ -8,6 +8,8 @@
 #include <mutex>
 #include <thread>
 
+#include <unistd.h>
+
 #include "ament_index_cpp/get_package_share_directory.hpp"
 #include "diagnostic_msgs/msg/diagnostic_status.hpp"
 #include "fake_controller.hpp"
@@ -35,13 +37,22 @@ std::string run(const std::string & cmd)
 }
 
 // The real xacro, so the description in these tests is the one the launch file produces.
-std::string urdf(const fr_test::FakeController & c, const std::string & extra_params = "",
-  int update_rate_hz = 125)
+std::string xacro(const std::string & args)
 {
   const std::string share = ament_index_cpp::get_package_share_directory("fr_robot_driver");
-  std::string xml = run("xacro " + share + "/urdf/fr_controlled.urdf.xacro model:=fairino5_v6 "
-      "use_mock_hardware:=false ip:=127.0.0.1 update_rate_hz:=" + std::to_string(update_rate_hz) +
-      " 2>/dev/null");
+  return run("xacro " + share + "/urdf/fr_controlled.urdf.xacro model:=fairino5_v6 " + args +
+           " 2>/dev/null");
+}
+
+// The plugin's node lives in a namespace of this process only: a real driver running on the same
+// ROS graph has a node of the same name, and a test must never call its services.
+const std::string kNs = "fr_test_" + std::to_string(::getpid());
+
+std::string urdf(const fr_test::FakeController & c, const std::string & extra_params = "",
+  int update_rate_hz = 125, const std::string & xacro_args = "")
+{
+  std::string xml = xacro("use_mock_hardware:=false ip:=127.0.0.1 namespace:=" + kNs + " update_rate_hz:=" +
+      std::to_string(update_rate_hz) + " " + xacro_args);
   const std::string ports = "<param name=\"xmlrpc_port\">" + std::to_string(c.xmlrpcPort()) +
     "</param><param name=\"state_port\">" + std::to_string(c.statePort()) +
     "</param><param name=\"instant_port\">" + std::to_string(c.instantPort()) + "</param>" + extra_params;
@@ -55,7 +66,7 @@ struct Rig
   // multi_threaded: the plugin's callbacks (status timer, services) run in parallel to the
   // lifecycle calls, as under ros2_control_node
   explicit Rig(const std::string & extra = "", int update_rate_hz = 125,
-    bool multi_threaded = false)
+    const std::string & xacro_args = "", bool multi_threaded = false)
   : update_rate(update_rate_hz)
   {
     if (multi_threaded) {
@@ -64,7 +75,7 @@ struct Rig
       executor = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
     }
     hardware_interface::ResourceManagerParams params;
-    params.robot_description = urdf(fake, extra, update_rate_hz);
+    params.robot_description = urdf(fake, extra, update_rate_hz, xacro_args);
     params.clock = std::make_shared<rclcpp::Clock>(RCL_STEADY_TIME);
     params.logger = rclcpp::get_logger("test");
     params.executor = executor;
@@ -72,7 +83,7 @@ struct Rig
     rm = std::make_unique<hardware_interface::ResourceManager>(params, true);
     status_node = std::make_shared<rclcpp::Node>("status_listener");
     status_sub = status_node->create_subscription<diagnostic_msgs::msg::DiagnosticStatus>(
-      "/fr_robot_hw/status", rclcpp::QoS(1).transient_local(),
+      "/" + kNs + "/fr_robot_hw/status", rclcpp::QoS(1).transient_local(),
       [this](diagnostic_msgs::msg::DiagnosticStatus::ConstSharedPtr m) {
         std::lock_guard<std::mutex> l(status_mutex);
         last_status = *m;
@@ -128,15 +139,18 @@ struct Rig
   bool available(const std::string & name) {return rm->state_interface_is_available(name);}
 
   // Calls ~/reset_error like an operator; returns (success, message).
-  std::pair<bool, std::string> reset()
+  std::pair<bool, std::string> reset() {return trigger("reset_error");}
+
+  // Calls the Trigger service ~/<name> like an operator; returns (success, message).
+  std::pair<bool, std::string> trigger(const std::string & name)
   {
-    auto node = std::make_shared<rclcpp::Node>("reset_caller");
-    auto client = node->create_client<std_srvs::srv::Trigger>("/fr_robot_hw/reset_error");
+    auto node = std::make_shared<rclcpp::Node>("operator");
+    auto client = node->create_client<std_srvs::srv::Trigger>("/" + kNs + "/fr_robot_hw/" + name);
     if (!client->wait_for_service(2s)) {return {false, "service not available"};}
     auto fut = client->async_send_request(std::make_shared<std_srvs::srv::Trigger::Request>());
     rclcpp::executors::SingleThreadedExecutor ex;
     ex.add_node(node);
-    if (ex.spin_until_future_complete(fut, 3s) != rclcpp::FutureReturnCode::SUCCESS) {
+    if (ex.spin_until_future_complete(fut, 5s) != rclcpp::FutureReturnCode::SUCCESS) {
       return {false, "no reply"};
     }
     const auto response = fut.get();
@@ -585,7 +599,7 @@ TEST(HardwareInterface, DeactivationFlushesTheFirmwareQueueWithStop)
 // use may be replaced underneath them (run under ThreadSanitizer to see a race, not only a crash).
 TEST(HardwareInterface, ReconfiguringWhileTheStatusTimerRunsIsSafe)
 {
-  Rig r("", 125, true);
+  Rig r("", 125, "gripper:=pgi140", true);
   for (int i = 0; i < 15; ++i) {
     ASSERT_TRUE(r.configure()) << i;
     r.run(2);
@@ -605,6 +619,427 @@ TEST(HardwareInterface, InconsistentRatesAreRejectedAtInit)
   // 100 Hz controller with cmdT 8 ms: 0.8 cycles per segment
   Rig r("", 100);
   EXPECT_EQ(r.rm->system_components_size(), 0u);    // the component did not load
+}
+
+// ---- the gripper (sdk_quirks G1-G7) ----
+
+namespace
+{
+const char * kWithGripper = "gripper:=pgi140";
+const char * kFinger = "left_finger_joint/position";
+const std::vector<std::string> kGripperCommands = {
+  "left_finger_joint/position", "left_finger_joint/max_velocity", "left_finger_joint/max_effort"};
+
+// The gripper controller's view: its three command interfaces, claimed.
+struct GripperController
+{
+  explicit GripperController(Rig & rig)
+  : r(rig),
+    position(r.rm->claim_command_interface(kGripperCommands[0])),
+    velocity(r.rm->claim_command_interface(kGripperCommands[1])),
+    effort(r.rm->claim_command_interface(kGripperCommands[2])) {}
+  // what the controller manager does when gripper_controller is activated / deactivated
+  void start() {ASSERT_TRUE(r.rm->perform_command_mode_switch(kGripperCommands, {}));}
+  void stop() {ASSERT_TRUE(r.rm->perform_command_mode_switch({}, kGripperCommands));}
+  double command() {return position.get_optional<double>().value_or(std::nan(""));}
+  // one controller cycle with this goal (velocity/effort 0: none given)
+  void command(double opening, double max_velocity = 0.0, double max_effort = 0.0)
+  {
+    r.cycle([&] {
+        (void)position.set_value(opening);
+        (void)velocity.set_value(max_velocity);
+        (void)effort.set_value(max_effort);
+      });
+  }
+  Rig & r;
+  hardware_interface::LoanedCommandInterface position, velocity, effort;
+};
+
+// Runs controller cycles until `pred` holds (the gripper sender works asynchronously).
+bool cycleUntil(Rig & r, const std::function<bool()> & pred, int cycles = 125)
+{
+  for (int i = 0; i < cycles && !pred(); ++i) {r.cycle();}
+  return pred();
+}
+
+const std::vector<double> kMove50 = {1, 50, 50, 20, 30000, 1, 0, 0, 0, 0};
+}  // namespace
+
+TEST(Gripper, MockDescriptionHasTheFingerJoint)
+{
+  hardware_interface::ResourceManagerParams params;
+  params.robot_description = xacro(kWithGripper);   // mock hardware
+  params.clock = std::make_shared<rclcpp::Clock>(RCL_STEADY_TIME);
+  params.logger = rclcpp::get_logger("test");
+  hardware_interface::ResourceManager rm(params, true);
+  for (const auto & c : kGripperCommands) {
+    EXPECT_TRUE(rm.command_interface_exists(c)) << c;
+  }
+  EXPECT_TRUE(rm.state_interface_exists("left_finger_joint/velocity"));
+  EXPECT_FALSE(rm.state_interface_exists("right_finger_joint/position"));   // a mimic joint: TF only
+  EXPECT_NE(params.robot_description.find("<parent link=\"tool0\"/>"), std::string::npos);
+}
+
+TEST(Gripper, CommandsAreSentOnlyWhenTheyChange)
+{
+  Rig r("", 125, kWithGripper);
+  r.fake.edit([](auto & s) {s.gripper_active = 1; s.gripper_position = 30; s.gripper_motiondone = 1;});
+  ASSERT_TRUE(r.configure());
+  ASSERT_TRUE(r.activate());
+  r.run(3);
+  EXPECT_NEAR(r.state(kFinger), 0.012, 1e-9);        // 30 % of the 0.04 m stroke
+
+  GripperController g(r);
+  g.start();
+  EXPECT_NEAR(g.command(), 0.012, 1e-9);             // starts from the reported opening
+  r.run(20);
+  EXPECT_EQ(r.fake.count("MoveGripper"), 0);        // holding it: nothing to send
+
+  g.command(0.02);                                   // no velocity, no effort given
+  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 1;}));
+  EXPECT_EQ(r.fake.params("MoveGripper")[0], kMove50);  // 50 %, default 50 % speed, 20 % force
+  for (int i = 0; i < 20; ++i) {g.command(0.02);}
+  g.command(0.0201);                                 // within 1 % of the stroke
+  r.run(20);
+  EXPECT_EQ(r.fake.count("MoveGripper"), 1);
+  EXPECT_NEAR(r.state(kFinger), 0.02, 1e-9);
+
+  g.command(0.04, 0.011, 14.0);                      // 25 % speed, 10 % force
+  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 2;}));
+  EXPECT_EQ(r.fake.params("MoveGripper")[1], (std::vector<double>{1, 100, 25, 10, 30000, 1, 0, 0, 0, 0}));
+  g.command(0.08, 1.0, 1000.0);                      // beyond the stroke and the scales: clamped
+  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 2;}));
+  g.command(-0.01);
+  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 3;}));
+  EXPECT_EQ(r.fake.params("MoveGripper")[2], (std::vector<double>{1, 0, 50, 20, 30000, 1, 0, 0, 0, 0}));
+  EXPECT_EQ(r.fake.count("ActGripper"), 0);         // never activated by the driver
+}
+
+TEST(Gripper, NothingIsSentUnlessTheControllerStartedOnAUsableGripper)
+{
+  Rig r("", 125, kWithGripper);                      // just powered up: the gripper is not active
+  ASSERT_TRUE(r.configure());
+  ASSERT_TRUE(r.activate());
+  r.run(3);
+  EXPECT_NEAR(r.state(kFinger), 0.04, 1e-9);         // unknown: the widest outline, not the frame's 0 %
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {
+      return Rig::value(s, "gripper_position_source") == "unknown_not_active";}));
+  GripperController g(r);
+  g.start();                                         // not usable: not armed
+  g.command(0.02);
+  r.run(20);
+  EXPECT_EQ(r.fake.count("MoveGripper"), 0);
+
+  const auto [ok, message] = r.trigger("gripper/activate");   // operator
+  ASSERT_TRUE(ok) << message;
+  r.run(5);
+  EXPECT_NEAR(r.state(kFinger), 0.04, 1e-9);         // open, though the frame says 0 %
+  g.command(0.02);                                   // the goal from before the activation...
+  r.run(30);
+  EXPECT_EQ(r.fake.count("MoveGripper"), 0);        // ...is never sent
+
+  g.stop();                                          // operator restarts gripper_controller
+  g.start();
+  EXPECT_NEAR(g.command(), 0.04, 1e-9);
+  r.run(10);
+  EXPECT_EQ(r.fake.count("MoveGripper"), 0);
+  g.command(0.0);
+  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 1;}));
+
+  // a gripper fault disarms; the commands stay ignored after it is gone, until a restart
+  r.fake.edit([](auto & s) {s.gripper_fault = 1;});
+  r.run(3);
+  g.command(0.02);
+  r.run(20);
+  r.fake.edit([](auto & s) {s.gripper_fault = 0;});
+  r.run(3);
+  g.command(0.03);
+  r.run(20);
+  EXPECT_EQ(r.fake.count("MoveGripper"), 1);
+
+  // a robot fault: the hardware deactivates, nothing goes out
+  g.stop();
+  g.start();
+  r.fake.edit([](auto & s) {s.main_code = 1; s.sub_code = 23;});
+  std::this_thread::sleep_for(50ms);                 // the next frames carry it
+  for (int i = 0; i < 30 && r.stateId() == lc::State::PRIMARY_STATE_ACTIVE; ++i) {
+    g.command(0.01);
+  }
+  EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_INACTIVE);
+  r.run(20);
+  EXPECT_EQ(r.fake.count("MoveGripper"), 1);
+}
+
+TEST(Gripper, ActivationOnlyOnRequestAndOnlyOnce)
+{
+  Rig r("", 125, kWithGripper);
+  ASSERT_TRUE(r.configure());
+  r.run(3);
+  ASSERT_TRUE(r.activate());
+  r.run(3);
+  EXPECT_EQ(r.fake.count("ActGripper"), 0);         // neither configure nor activate does it
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "gripper_active") == "0";}));
+
+  r.fake.edit([](auto & s) {s.actual_qd[2] = 5.0;});
+  std::this_thread::sleep_for(50ms);
+  auto [ok, message] = r.trigger("gripper/activate");
+  EXPECT_FALSE(ok);
+  EXPECT_NE(message.find("moving"), std::string::npos) << message;
+  r.fake.edit([](auto & s) {s.actual_qd[2] = 0.0; s.main_code = 1; s.sub_code = 23;});
+  std::this_thread::sleep_for(50ms);                 // the next frames carry it
+  std::tie(ok, message) = r.trigger("gripper/activate");
+  EXPECT_FALSE(ok);
+  EXPECT_NE(message.find("fault"), std::string::npos) << message;
+  EXPECT_EQ(r.fake.count("ActGripper"), 0);
+  ASSERT_TRUE(r.reset().first);                      // the operator clears the robot fault...
+  r.run(5);
+  ASSERT_TRUE(r.activate());                         // ...and reactivates
+  r.run(10);
+  r.fake.edit([](auto & s) {s.gripper_fault = 1;});  // a faulted, inactive gripper (G11)
+  std::this_thread::sleep_for(50ms);
+
+  std::tie(ok, message) = r.trigger("gripper/activate");   // activating is what clears it
+  ASSERT_TRUE(ok) << message;
+  EXPECT_EQ(r.fake.params("ActGripper"), (std::vector<std::vector<double>>{{1, 1}}));
+  EXPECT_EQ(r.fake.state().gripper_fault, 0);
+  r.run(3);
+  EXPECT_NEAR(r.state(kFinger), 0.04, 1e-9);
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {
+      return Rig::value(s, "gripper_active") == "1" &&
+      Rig::value(s, "gripper_position_source") == "inferred_open_after_activation";}));
+  EXPECT_EQ(Rig::value(r.status(), "gripper_commands"), "not armed");
+
+  std::tie(ok, message) = r.trigger("gripper/activate");
+  EXPECT_FALSE(ok);
+  EXPECT_NE(message.find("already active"), std::string::npos) << message;
+  EXPECT_EQ(r.fake.count("ActGripper"), 1);
+}
+
+TEST(Gripper, TheOpeningIsHeldWhileTheFrameSaysZero)
+{
+  Rig r("", 125, kWithGripper);
+  // activated before the driver started and never moved since (sdk_quirks G5)
+  r.fake.edit([](auto & s) {s.gripper_active = 1; s.gripper_position = 0; s.gripper_motiondone = 0;});
+  r.fake.gripper_motion_ms = 400;                    // the frame says "0 %, not done" meanwhile (G10)
+  ASSERT_TRUE(r.configure());
+  ASSERT_TRUE(r.activate());
+  r.run(10);
+  EXPECT_NEAR(r.state(kFinger), 0.04, 1e-9);         // fully open, though the frame says 0 %
+  GripperController g(r);
+  g.start();
+  EXPECT_NEAR(g.command(), 0.04, 1e-9);
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "gripper_commands") == "armed";}));
+
+  g.command(0.02);
+  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 1;}));
+  r.run(10);
+  EXPECT_NEAR(r.state(kFinger), 0.04, 1e-9);         // still where it was known to be
+  ASSERT_TRUE(cycleUntil(r, [&] {return std::abs(r.state(kFinger) - 0.02) < 1e-9;}));
+  g.command(0.0);
+  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 2;}));
+  r.run(10);
+  EXPECT_NEAR(r.state(kFinger), 0.02, 1e-9);         // held during the motion...
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {
+      return Rig::value(s, "gripper_position_source") == "held_during_motion";}));
+  ASSERT_TRUE(cycleUntil(r, [&] {return r.state(kFinger) == 0.0;}));   // ...closed and done: 0 %
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "gripper_position_source") == "frame";}));
+}
+
+TEST(Gripper, WriteNeverWaitsAndOnlyTheNewestCommandGoesOut)
+{
+  Rig r("", 125, kWithGripper);
+  r.fake.edit([](auto & s) {s.gripper_active = 1; s.gripper_position = 100; s.gripper_motiondone = 1;});
+  r.fake.move_gripper_delay_ms = 300;
+  ASSERT_TRUE(r.configure());
+  ASSERT_TRUE(r.activate());
+  r.run(20);                                         // the stream pauses
+  GripperController g(r);
+  g.start();
+
+  const auto timed = [&](double opening) {
+      const auto t0 = std::chrono::steady_clock::now();
+      g.command(opening);
+      return std::chrono::steady_clock::now() - t0;
+    };
+  EXPECT_LT(timed(0.01), 50ms);                      // a cycle includes an 8 ms sleep
+  std::this_thread::sleep_for(50ms);                 // 25 % is in flight for 300 ms
+  EXPECT_LT(timed(0.02), 50ms);
+  EXPECT_LT(timed(0.03), 50ms);
+  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 2;}));
+  r.run(60);
+  const auto sent = r.fake.params("MoveGripper");
+  ASSERT_EQ(sent.size(), 2u);
+  EXPECT_EQ(sent[0][1], 25);
+  EXPECT_EQ(sent[1][1], 75);                         // 50 % was overtaken before it went out
+}
+
+TEST(HardwareInterface, TheStreamPausesWhileTheArmStandsAndResumesWithAPrefill)
+{
+  Rig r;
+  ASSERT_TRUE(r.configure());
+  ASSERT_TRUE(r.activate());
+  auto cmd = r.rm->claim_command_interface(kPan);
+  r.run(20);
+  const auto standing = r.fake.servoJ().size();     // the prefill and a repeat, then nothing
+  r.run(50);
+  EXPECT_EQ(r.fake.servoJ().size(), standing);
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "servo_stream") == "paused";}));
+
+  for (int i = 1; i <= 50; ++i) {                   // a ramp: streams again
+    r.cycle([&] {(void)cmd.set_value(i * 0.5 * kDeg);});
+  }
+  const auto sent = r.fake.servoJ();
+  ASSERT_GT(sent.size(), standing + 40);
+  for (std::size_t i = standing; i < standing + 3; ++i) {
+    EXPECT_NEAR(sent[i][0], 0.0, 1e-9) << i;         // the prefill stands where the arm stood
+  }
+  ASSERT_TRUE(cycleUntil(r, [&] {return std::abs(r.fake.servoJ().back()[0] - 25.0) < 1e-6;}));
+  r.run(20);
+  const auto stopped = r.fake.servoJ().size();
+  r.run(30);
+  EXPECT_EQ(r.fake.servoJ().size(), stopped);        // standing again: paused
+  EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_ACTIVE);
+}
+
+TEST(Gripper, ACommandWaitsForTheArmToStand)
+{
+  Rig r("", 125, kWithGripper);
+  r.fake.edit([](auto & s) {s.gripper_active = 1; s.gripper_position = 100; s.gripper_motiondone = 1;});
+  ASSERT_TRUE(r.configure());
+  ASSERT_TRUE(r.activate());
+  r.run(10);
+  GripperController g(r);
+  g.start();
+  auto pan = r.rm->claim_command_interface(kPan);
+  for (int i = 1; i <= 50; ++i) {                    // the arm moves; the gripper is asked to close
+    r.cycle([&] {
+        (void)pan.set_value(i * 0.5 * kDeg);
+        (void)g.position.set_value(0.0);
+      });
+  }
+  EXPECT_EQ(r.fake.count("MoveGripper"), 0);
+  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 1;}));   // once it stands
+  EXPECT_EQ(r.fake.move_gripper_while_streaming, 0);
+  EXPECT_EQ(r.fake.params("MoveGripper")[0][1], 0);
+}
+
+TEST(Gripper, AnArmMotionIsRefusedWhileTheGripperMovesWithoutDeactivating)
+{
+  Rig r("", 125, kWithGripper);
+  r.fake.edit([](auto & s) {s.gripper_active = 1; s.gripper_position = 100; s.gripper_motiondone = 1;});
+  r.fake.gripper_motion_ms = 600;
+  ASSERT_TRUE(r.configure());
+  ASSERT_TRUE(r.activate());
+  r.run(10);
+  GripperController g(r);
+  g.start();
+  auto pan = r.rm->claim_command_interface(kPan);
+  g.command(0.02);
+  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 1;}));
+  const auto before = r.fake.servoJ().size();
+  for (int i = 1; i <= 20; ++i) {                    // a trajectory starts while the gripper moves
+    r.cycle([&] {(void)pan.set_value(i * 0.5 * kDeg);});
+  }
+  EXPECT_EQ(r.fake.servoJ().size(), before);         // refused: nothing went out
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {
+      return Rig::value(s, "arm_commands") == "refused (gripper busy)";}));
+  EXPECT_EQ(Rig::value(r.status(), "gripper_busy"), "1");
+
+  // the gripper is done, but the command is 10 deg away now: still held, no step fault
+  ASSERT_TRUE(cycleUntil(r, [&] {
+      return Rig::value(r.status(), "gripper_busy") == "0";}, 200));
+  r.run(20);
+  EXPECT_EQ(r.fake.servoJ().size(), before);
+  EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_ACTIVE);
+  EXPECT_EQ(r.state("fr_status/fault_class"), 0.0);
+
+  // within one step limit (1.44 deg) but not where the arm stands: still held, no jump
+  for (int i = 0; i < 20; ++i) {
+    r.cycle([&] {(void)pan.set_value(1.0 * kDeg);});
+  }
+  EXPECT_EQ(r.fake.servoJ().size(), before);
+  // back where the arm stands (what the trajectory controller holds after aborting): accepted
+  r.cycle([&] {(void)pan.set_value(0.0);});
+  for (int i = 1; i <= 20; ++i) {
+    r.cycle([&] {(void)pan.set_value(i * 0.5 * kDeg);});
+  }
+  EXPECT_GT(r.fake.servoJ().size(), before + 15);
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "arm_commands") == "accepted";}));
+  EXPECT_EQ(r.fake.servoj_while_gripper_moves, 0);
+  EXPECT_EQ(r.fake.move_gripper_while_streaming, 0);
+}
+
+TEST(Gripper, AFailedCallKeepsTheArmStillUntilTheFrameShowsTheGripperDone)
+{
+  Rig r("", 125, kWithGripper);
+  r.fake.edit([](auto & s) {s.gripper_active = 1; s.gripper_position = 100; s.gripper_motiondone = 1;});
+  r.fake.move_gripper_delay_ms = 1200;   // past the call's 1 s timeout: it fails, the gripper moves anyway
+  r.fake.gripper_motion_ms = 600;
+  ASSERT_TRUE(r.configure());
+  ASSERT_TRUE(r.activate());
+  r.run(10);
+  GripperController g(r);
+  g.start();
+  auto pan = r.rm->claim_command_interface(kPan);
+  g.command(0.02);
+  ASSERT_TRUE(cycleUntil(r, [&] {
+      return Rig::value(r.status(), "gripper_command_failures") == "1";}, 250));
+  EXPECT_EQ(Rig::value(r.status(), "gripper_busy"), "1");
+  const auto before = r.fake.servoJ().size();
+  for (int i = 1; i <= 20; ++i) {                    // a trajectory starts after the failure
+    r.cycle([&] {(void)pan.set_value(i * 0.05 * kDeg);});
+  }
+  EXPECT_EQ(r.fake.servoJ().size(), before);         // still refused: the gripper may be moving
+  ASSERT_TRUE(cycleUntil(r, [&] {return Rig::value(r.status(), "gripper_busy") == "0";}, 250));
+  EXPECT_EQ(r.fake.count("MoveGripper"), 1);
+  EXPECT_NEAR(r.state(kFinger), 0.02, 1e-9);
+  EXPECT_EQ(r.fake.servoj_while_gripper_moves, 0);
+
+  r.cycle([&] {(void)pan.set_value(0.0);});          // back where the arm stands: accepted
+  for (int i = 1; i <= 20; ++i) {
+    r.cycle([&] {(void)pan.set_value(i * 0.5 * kDeg);});
+  }
+  EXPECT_GT(r.fake.servoJ().size(), before + 15);
+  EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_ACTIVE);
+}
+
+TEST(Gripper, AnArmCommandThatStaysAwayAfterTheGripperIsAProtectiveStop)
+{
+  Rig r("", 125, kWithGripper);
+  r.fake.edit([](auto & s) {s.gripper_active = 1; s.gripper_position = 100; s.gripper_motiondone = 1;});
+  r.fake.gripper_motion_ms = 300;
+  ASSERT_TRUE(r.configure());
+  ASSERT_TRUE(r.activate());
+  r.run(10);
+  GripperController g(r);
+  g.start();
+  auto pan = r.rm->claim_command_interface(kPan);
+  g.command(0.02);
+  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 1;}));
+  const auto before = r.fake.servoJ().size();
+  for (int i = 1; i <= 20; ++i) {                    // arm commanded while the gripper moves: held
+    r.cycle([&] {(void)pan.set_value(i * 0.5 * kDeg);});
+  }
+  ASSERT_TRUE(cycleUntil(r, [&] {return Rig::value(r.status(), "gripper_busy") == "0";}, 200));
+
+  // the command never comes back (e.g. a trajectory that did not abort)
+  const auto t0 = std::chrono::steady_clock::now();
+  bool deactivated = false;
+  for (int i = 0; i < 500 && !deactivated; ++i) {
+    deactivated = r.cycle().result == return_type::DEACTIVATE;
+  }
+  ASSERT_TRUE(deactivated);
+  EXPECT_GT(std::chrono::steady_clock::now() - t0, 1500ms);   // 2 s after the gripper's end
+  EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_INACTIVE);
+  EXPECT_EQ(r.fake.servoJ().size(), before);          // the held motion never went out
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "fault_class") == "1";}));
+  EXPECT_NE(r.status().message.find("gripper finished"), std::string::npos) << r.status().message;
+  EXPECT_EQ(Rig::value(r.status(), "main_code"), "0");   // the driver's own stop, not the robot's
+  EXPECT_EQ(r.fake.count("ResetAllError"), 0);
+
+  ASSERT_TRUE(r.activate());                          // reactivating clears it
+  r.run(3);
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "fault_class") == "0";}));
 }
 
 int main(int argc, char ** argv)

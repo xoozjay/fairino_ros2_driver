@@ -48,6 +48,10 @@ def launch_setup(context, *args, **kwargs):
     fk_position_tolerance_mm = LaunchConfiguration('fk_position_tolerance_mm').perform(context)
     fk_angle_tolerance_deg = LaunchConfiguration('fk_angle_tolerance_deg').perform(context)
     activate_hardware = LaunchConfiguration('activate_hardware').perform(context).lower() in ('true', '1')
+    gripper = LaunchConfiguration('gripper').perform(context)
+    gripper_index = LaunchConfiguration('gripper_index').perform(context)
+    if gripper not in ('none', 'pgi140'):
+        raise ValueError(f"gripper must be none or pgi140, not '{gripper}'")
     mock = use_mock_hardware.lower() in ('true', '1')
     # Real hardware: one ServoJ segment of cmdT per controller cycle (docs/sdk_quirks.md S1).
     real_update_rate = 1000 // cmd_t_ms
@@ -72,6 +76,8 @@ def launch_setup(context, *args, **kwargs):
         ' fk_check:=', fk_check,
         ' fk_position_tolerance_mm:=', fk_position_tolerance_mm,
         ' fk_angle_tolerance_deg:=', fk_angle_tolerance_deg,
+        ' gripper:=', gripper,
+        ' gripper_index:=', gripper_index,
     ])
 
     # Controllers: instantiate the template with this robot's tf_prefix and
@@ -138,9 +144,20 @@ def launch_setup(context, *args, **kwargs):
         arguments=['joint_trajectory_controller', '--param-file', processed_file],
     )
 
+    # Real hardware passes the gripper controller's commands on only if it started while the gripper
+    # was usable: after the operator's activation (~/gripper/activate) restart it; see the README.
+    commanding = [jtc]
+    if gripper != 'none':
+        commanding.append(Node(
+            package='controller_manager',
+            executable='spawner',
+            namespace=namespace,
+            arguments=['gripper_controller', '--param-file', processed_file],
+        ))
+
     nodes = [rsp, control_node, jsb]
     if mock or not activate_hardware:
-        nodes.append(jtc)
+        nodes += commanding
     else:
         cm_name = '/' + (namespace + '/' if namespace else '') + 'controller_manager'
         activate = ExecuteProcess(
@@ -149,7 +166,7 @@ def launch_setup(context, *args, **kwargs):
             output='screen')
         # the trajectory controller needs the command interfaces, which exist once active
         nodes.append(activate)
-        nodes.append(RegisterEventHandler(OnProcessExit(target_action=activate, on_exit=[jtc])))
+        nodes.append(RegisterEventHandler(OnProcessExit(target_action=activate, on_exit=commanding)))
 
     # Optional: attach the robot base to a shared world frame
     if use_world_tf:
@@ -216,5 +233,9 @@ def generate_launch_description():
                                           '(false: leave it inactive, e.g. to reset a fault first)'),
         DeclareLaunchArgument('mock_gpio_commands', default_value='false',
                               description='mock only: a loop-back command interface on fr_status/fault_class'),
+        DeclareLaunchArgument('gripper', default_value='none',
+                              description='end effector on tool0: none or pgi140'),
+        DeclareLaunchArgument('gripper_index', default_value='1',
+                              description="real hardware only: the controller's gripper number"),
         OpaqueFunction(function=launch_setup),
     ])
