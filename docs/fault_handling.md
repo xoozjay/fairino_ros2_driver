@@ -29,7 +29,12 @@ ros2_control **没有**急停/保护停止/机器人模式的概念，也不负�
 |---|---|---|---|
 | **COMM**（通信故障） | 与控制器的数据链路不可信 | `read()` → `ERROR` → `on_error` → UNCONFIGURED | 控制器在线后，操作者 configure → activate |
 | **ROBOT_FAULT**（机器人故障） | 超速、超限、碰撞、安全停止、掉使能等（F1） | 立即停发 ServoJ；`write()` → `DEACTIVATE` → INACTIVE | **操作者显式**复位后重新激活（F3） |
-| **ESTOP**（急停） | 急停拍下 | 同 ROBOT_FAULT，且**拒绝一切复位与激活** | 只能硬件重启（F4）；重启导致断线 → 转 COMM |
+| **ESTOP**（急停） | 状态帧 `EmergencyStop != 0` | 同 ROBOT_FAULT，且**拒绝一切复位与激活** | 只能硬件重启（F4） |
+
+**真机上的急停实测表现（F4）**：急停切断控制箱电源，状态帧里从未出现 `EmergencyStop=1`。驱动先看到 COMM
+（状态帧超时 → UNCONFIGURED）；松开后控制器自行上线并报 `main_code=1 sub_code=149`，此时驱动（只读重连
+状态流，见第七节）报 ROBOT_FAULT。所以本硬件上急停表现为 3 → 1，ESTOP（2）只在状态帧真的报
+`EmergencyStop` 的场合出现（仿真器无法注入，只有假控制器测试覆盖）。
 
 优先级：COMM > ESTOP > ROBOT_FAULT（链路不可信时，状态帧里的一切都不可信）。
 
@@ -113,10 +118,12 @@ stateDiagram-v2
 
 > 第 2–5 步可以后续合并为一个 `recover` 服务，但**触发仍必须来自操作者**。
 
-**ESTOP**：硬件重启控制器 → 链路断开，插件转 COMM → UNCONFIGURED → 控制器上线后由操作者
-configure → activate。
+**ESTOP**（真机：控制箱断电，见第二节）：先 COMM → UNCONFIGURED；松开后控制器上线并报 1/149（`~/status` 可见），
+须断电重启控制箱（F4），之后由操作者 configure → activate。
 
-**COMM**：确认控制器在线 → configure → activate → 激活控制器。暂不做自动重连。
+**COMM**：确认控制器在线 → configure → activate → 激活控制器。驱动**不重连机器人**（不连 20003、8080，
+不发任何指令）；只在 `unconfigured` 期间每 2 s 重连只读的 20004 状态流，让 `~/status` 反映控制器重新上线后
+自报的状态。
 
 ## 六、预防（从 ROS 侧减少触发超速/超限）
 
@@ -128,21 +135,34 @@ configure → activate。
   故障类（ROBOT_FAULT / ESTOP）由固件自己停；`ServoSender::halt()` 只停发并丢弃主机队列，**非故障的主动停下（如 deactivate）应先发 `STOP`（8080）清空固件队列**，
   再 `ServoMoveEnd`——仿真器上 `STOP` 约 100 ms 内停稳且队列归零（S16）；真机 ❓
 
-## 七、状态上报（GPIO 状态接口）
+## 七、状态上报
 
-一个 `<gpio name="${tf_prefix}fr_status">`，全部为 state interface（double）：
+### GPIO 状态接口
+
+一个 `<gpio name="${tf_prefix}fr_status">`，只有一个 state interface（double）：
 
 | 接口 | 来源 |
 |---|---|
 | `fault_class` | 0 正常 / 1 ROBOT_FAULT / 2 ESTOP / 3 COMM |
-| `estop`、`safety_stop0`、`safety_stop1`、`collision` | 对应字段 |
-| `main_code`、`sub_code` | 原样 |
-| `enabled`、`robot_mode`、`robot_state` | 对应字段 |
-| `servo_queue_len` | 状态帧 `mc_queue_len`（555）：固件运动队列占用；稳态应约 0–2，持续增长 = 发送快于消费（S16） |
 
-- 由 broadcaster 发布为话题，供上层 / HMI 使用
-- **mock 对等**：mock 分支声明同名接口；`mock_gpio_commands:=true` 给它们加回环命令接口，用来演练上层的故障处理
+- 由 broadcaster 发布在 `dynamic_joint_states`，供在 ros2_control 内部做判断的控制器使用。**通信中断时硬件转
+  `unconfigured`，ros2_control 会停用 broadcaster，接口随之停发**（实测）；故障码、急停、安全停止、使能、
+  固件队列占用等其余内容只在下面的 `~/status` 里
+- **mock 对等**：mock 分支声明同名接口；`mock_gpio_commands:=true` 给它加回环命令接口，用来演练上层的故障处理
   （只演练读侧：状态机本身由 `fr_robot_driver/test` 的假控制器测试覆盖）
+
+### `~/status` 话题（上层始终可见的状态）
+
+插件节点 `<ns>/<tf_prefix>fr_robot_hw`（生命周期与插件对象相同，硬件 `unconfigured` 时仍在）发布 `~/status`，
+`diagnostic_msgs/msg/DiagnosticStatus`，QoS `transient_local` 深度 1。由节点上的定时器（非实时线程，
+100 ms 检查，状态变化立即发、否则 1 Hz）发布，`read()`/`write()` 不发布。字段含义见 `fr_robot_driver/README.md`
+"故障与恢复"。纯逻辑在 `status_report.hpp`（`StatusTracker`），随 `since`/`previous` 记录当前状态的起始时刻和上一个故障。
+
+- 链路中断：`fault_class=3`，`message` 写"链路中断"并把控制器掉电（如急停）列为可能原因，不断言是网络故障；
+  断线多久看 `since`；`last_frame_age_ms` 在监视线程收到帧之前为 `none`
+- 断线后只读重连状态流：`on_error` 的清理线程关闭全部连接后，每 2 s 重连 20004（单客户端；不连 20003/8080、
+  不发 ServoJ、不复位）。帧恢复后 `~/status` 按状态帧分类（如 1/149），`hardware_state` 仍为 `unconfigured`。
+  `on_configure`/`on_cleanup`/析构时线程结束并释放 20004。此时 `fr_probe` 等工具连不上 20004（与驱动运行时相同）
 
 ## 八、固件侧坐标系配置（只为安全功能，不用于运动指令）
 
@@ -173,7 +193,6 @@ configure → activate。
 - [ ] `robot_mode` 手动/自动对 ServoJ 的影响
 - [ ] SI0/SI1 安全停止能否由 `ResetAllError` 清除
 - [ ] 伺服流中断（停发 ServoJ）时固件的行为（S4；仿真器见 S16）
-- [ ] 急停下插件的行为（仿真器无法注入急停：只有假控制器测试覆盖；`reset_error` 拒绝、硬件 → inactive）
 - [ ] `comm_timeout_periods`（默认 3 个状态周期 = 24 ms）在真机网络上是否会误报 COMM
 - [ ] 真机上的队列行为：255 条满时 `ServoJ` 是否同样阻塞、`mc_queue_len` 是否同样反映占用、`STOP` 是否同样清空队列（S16）
 - [ ] 真机上 FK 与 `flange_cur_pos` 的实际偏差（标定补偿）、非正装时的基坐标系，据此收紧容差

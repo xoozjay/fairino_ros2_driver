@@ -9,7 +9,7 @@ ros2_control bringup for Fairino 协作机器人，对标 `ur_robot_driver`（�
    `joint_state_broadcaster` + `joint_trajectory_controller` 完整可用。
 2. **真机 / 仿真器**：`use_mock_hardware:=false`，`fr_robot_driver/FrRobotHardwareInterface`
    （C++ 插件，依赖 `fr_client_library`，软件版本 3.8.4；3.8.3 仿真器已验证）。
-   两条管线暴露**同样的** `fr_status` 状态接口，上层不必区分。
+   两条管线暴露**同样的** `fr_status/fault_class` 状态接口，上层不必区分。
 
 ### 真机 / 仿真器
 
@@ -39,10 +39,29 @@ launch 参数：`ip`、`cmd_t_ms`（ServoJ 的 cmdT，整毫秒，默认 8）、
 
 | 现象 | 驱动做什么 | 恢复 |
 |---|---|---|
-| 固件故障 / 碰撞 / 安全停止 / 掉使能 | 立即停发，硬件 → `inactive`，`fr_status/fault_class = 1`，故障码原样导出 | 排除原因 → `reset_error` → 激活硬件 → 激活控制器 |
+| 固件故障 / 碰撞 / 安全停止 / 掉使能 | 立即停发，硬件 → `inactive`，`fr_status/fault_class = 1`，故障码原样报在 `~/status` | 排除原因 → `reset_error` → 激活硬件 → 激活控制器 |
 | 命令超过单周期步长（URDF 速度限位 × cmdT） | 拒绝该命令（固件从未见到），同上，`main_code` 仍为 0 | 同上 |
-| 急停 | 同上，`fault_class = 2`；`reset_error` **拒绝** | 只能硬件重启控制器，之后重新 configure |
-| 通信中断（状态帧超时/连接断开/ServoJ 连接失败） | 硬件 → `unconfigured`，`fault_class = 3`；`reset_error` 拒绝 | 确认控制器在线后重新 configure → activate |
+| 急停（本硬件：控制箱断电，见下） | 先是通信中断；控制器自行上线后状态帧报 `main_code=1 sub_code=149`，即 `fault_class = 1`。`reset_error` 拒绝（硬件已 `unconfigured`） | 控制箱断电重启（sdk_quirks F4），之后重新 configure → activate |
+| 状态帧真的报 `EmergencyStop=1` | 同固件故障，`fault_class = 2`；`reset_error` **拒绝** | 只能硬件重启控制器，之后重新 configure |
+| 通信中断（状态帧超时/连接断开/ServoJ 连接失败） | 硬件 → `unconfigured`，`fault_class = 3`；`reset_error` 拒绝；之后只读重连状态流（见下） | 确认控制器在线后重新 configure → activate |
+
+本硬件上急停会切断控制箱电源（sdk_quirks F4），状态帧里从未出现 `EmergencyStop=1`，所以急停表现为
+`fault_class` 3 → 1；2 只在状态帧真的报急停时出现。
+
+**状态话题**：插件节点 `<ns>/<tf_prefix>fr_robot_hw` 发布 `~/status`（`diagnostic_msgs/msg/DiagnosticStatus`，
+QoS `transient_local` 深度 1，rqt_runtime_monitor 可看）。它不依赖 `joint_state_broadcaster`：通信中断时 ros2_control
+会把硬件转 `unconfigured` 并停用 broadcaster，`fr_status` 随之停发，而 `~/status` 在硬件任何生命周期状态下都在发
+（状态变化时立即发，否则 1 Hz）。
+
+| 项 | 内容 |
+|---|---|
+| `level` | OK；WARN：未连接，或控制器可达但硬件 `unconfigured`；ERROR：任一故障 |
+| `message` | 一句话，如 `robot fault: main_code=1 sub_code=149, safety stop SI0, ...`、`communication fault: no state frame in time (link to the controller interrupted; possible causes: ...)`。链路中断只说"链路中断"，可能原因含控制器掉电（如急停），不断言是网络故障 |
+| `values` | `fault_class`、`main_code`、`sub_code`、`enabled`、`estop`、`safety_stop0/1`、`servo_queue_len`（固件 ServoJ 队列占用；时钟偏差补偿使它稳态在 `prefill` 到 `prefill + 1` 之间）（无状态帧时为 `unknown`）；`hardware_state`（unconfigured/inactive/active/finalized）；`link`（up/down）；`last_frame_age_ms`；`since`（当前状态开始时刻，UTC）；`previous`（上一个故障及其起止时刻） |
+
+**通信中断之后**：后台线程每 2 s 重连 20004 状态流（只读：不连 20003、8080，不发 ServoJ、不复位），
+控制器重新上线后 `~/status` 即反映它自报的状态（如 1/149）。硬件仍是 `unconfigured`，恢复运动仍须操作者
+configure → activate；`configure`/`cleanup`/退出时该线程结束并释放 20004。
 
 ```bash
 ros2 service call /<ns>/<tf_prefix>fr_robot_hw/reset_error std_srvs/srv/Trigger   # 例：/fr_robot_hw/reset_error
@@ -50,9 +69,8 @@ ros2 control set_hardware_component_state <tf_prefix>fr_robot active
 ros2 control set_controller_state joint_trajectory_controller active
 ```
 
-`fr_status` 接口（`<tf_prefix>fr_status/...`，经 `joint_state_broadcaster` 发布在 `dynamic_joint_states`）：
-`fault_class`、`estop`、`safety_stop0/1`、`collision`、`main_code`、`sub_code`、`enabled`、`robot_mode`、
-`robot_state`、`servo_queue_len`（固件 ServoJ 队列占用；时钟偏差补偿使它稳态在 `prefill` 到 `prefill + 1` 之间）。
+ros2_control 状态接口只有 `<tf_prefix>fr_status/fault_class`（经 `joint_state_broadcaster` 发布在
+`dynamic_joint_states`），其余都在 `~/status`。
 
 可选 `rt_priority`（1–99，默认 0 = 关）：伺服发送线程用 `SCHED_FIFO`；没有权限（`CAP_SYS_NICE`、rtprio 限额）时告警并照常运行。
 不是必需的：固件队列能吸收约 `prefill × cmd_t_ms` 的调度抖动。
@@ -64,7 +82,7 @@ ros2 control set_controller_state joint_trajectory_controller active
   更快的控制周期按整数倍抽取（500 Hz、8 ms → 每 4 个周期发 1 条）。
 - `ServoJ` 不受全局速度/加速度限制（sdk_quirks S14）：保护靠 URDF 限位、`enforce_command_limits`（真机分支默认开）
   和插件的步长检查。
-- mock 分支加 `mock_gpio_commands:=true` 会给 `fr_status` 加回环命令接口，用来演练上层的故障处理。
+- mock 分支加 `mock_gpio_commands:=true` 会给 `fr_status/fault_class` 加回环命令接口，用来演练上层的故障处理。
 
 ## 用法
 
@@ -141,7 +159,7 @@ rviz2 -d $(ros2 pkg prefix fr_robot_driver)/share/fr_robot_driver/rviz/dual_cell
 
 ```
 urdf/fr_controlled.urdf.xacro       顶层：fr_description 宏 + fr_ros2_control 宏
-urdf/fr_ros2_control.xacro          <ros2_control> 生成宏（joint 名带 tf_prefix；mock 与真机同名 fr_status）
+urdf/fr_ros2_control.xacro          <ros2_control> 生成宏（joint 名带 tf_prefix；mock 与真机同名 fr_status/fault_class）
 src/ include/ fr_robot_driver.xml   硬件插件 FrRobotHardwareInterface（+ reset_policy.hpp）
 test/                              插件状态机测试（假控制器 + ResourceManager）
 urdf/table_cell.urdf.xacro          工作台静态场景（world + 台面）

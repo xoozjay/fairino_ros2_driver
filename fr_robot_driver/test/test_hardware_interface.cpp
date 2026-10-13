@@ -5,9 +5,11 @@
 #include <cmath>
 #include <cstdio>
 #include <memory>
+#include <mutex>
 #include <thread>
 
 #include "ament_index_cpp/get_package_share_directory.hpp"
+#include "diagnostic_msgs/msg/diagnostic_status.hpp"
 #include "fake_controller.hpp"
 #include "hardware_interface/resource_manager.hpp"
 #include "lifecycle_msgs/msg/state.hpp"
@@ -50,10 +52,17 @@ std::string urdf(const fr_test::FakeController & c, const std::string & extra_pa
 // One robot: fake controller + ResourceManager on its own executor (for the reset service).
 struct Rig
 {
-  explicit Rig(const std::string & extra = "", int update_rate_hz = 125)
+  // multi_threaded: the plugin's callbacks (status timer, services) run in parallel to the
+  // lifecycle calls, as under ros2_control_node
+  explicit Rig(const std::string & extra = "", int update_rate_hz = 125,
+    bool multi_threaded = false)
   : update_rate(update_rate_hz)
   {
-    executor = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
+    if (multi_threaded) {
+      executor = std::make_shared<rclcpp::executors::MultiThreadedExecutor>();
+    } else {
+      executor = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
+    }
     hardware_interface::ResourceManagerParams params;
     params.robot_description = urdf(fake, extra, update_rate_hz);
     params.clock = std::make_shared<rclcpp::Clock>(RCL_STEADY_TIME);
@@ -61,6 +70,15 @@ struct Rig
     params.executor = executor;
     params.update_rate = update_rate_hz;
     rm = std::make_unique<hardware_interface::ResourceManager>(params, true);
+    status_node = std::make_shared<rclcpp::Node>("status_listener");
+    status_sub = status_node->create_subscription<diagnostic_msgs::msg::DiagnosticStatus>(
+      "/fr_robot_hw/status", rclcpp::QoS(1).transient_local(),
+      [this](diagnostic_msgs::msg::DiagnosticStatus::ConstSharedPtr m) {
+        std::lock_guard<std::mutex> l(status_mutex);
+        last_status = *m;
+        ++status_count;
+      });
+    executor->add_node(status_node);
     // Spin only now, as controller_manager does: a component that fails on_init is destroyed inside
     // the ResourceManager constructor together with the node its base class added to the executor,
     // and destroying a node while another thread waits on it crashes (about 1 in 50 runs under load).
@@ -125,10 +143,41 @@ struct Rig
     return {response->success, response->message};
   }
 
+  // ---- the `~/status` topic ----
+  diagnostic_msgs::msg::DiagnosticStatus status()
+  {
+    std::lock_guard<std::mutex> l(status_mutex);
+    return last_status;
+  }
+  static std::string value(const diagnostic_msgs::msg::DiagnosticStatus & s, const std::string & key)
+  {
+    for (const auto & kv : s.values) {
+      if (kv.key == key) {return kv.value;}
+    }
+    return "<missing>";
+  }
+  // Waits (without running controller cycles) until the status satisfies `pred`.
+  bool waitStatus(
+    const std::function<bool(const diagnostic_msgs::msg::DiagnosticStatus &)> & pred,
+    std::chrono::milliseconds timeout = 5s)
+  {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+      if (pred(status())) {return true;}
+      std::this_thread::sleep_for(20ms);
+    }
+    return pred(status());
+  }
+
   fr_test::FakeController fake;
+  std::mutex status_mutex;
+  diagnostic_msgs::msg::DiagnosticStatus last_status;
+  int status_count = 0;
+  rclcpp::Node::SharedPtr status_node;
+  rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticStatus>::SharedPtr status_sub;
   int update_rate;
   rclcpp::Clock params_clock{RCL_STEADY_TIME};
-  rclcpp::executors::SingleThreadedExecutor::SharedPtr executor;
+  rclcpp::Executor::SharedPtr executor;
   std::thread spinner;
   std::unique_ptr<hardware_interface::ResourceManager> rm;
 };
@@ -148,8 +197,9 @@ TEST(HardwareInterface, ConfigureReadsTheRobotAndExportsItsState)
   EXPECT_NEAR(r.state("shoulder_lift_joint/position"), -90 * kDeg, 1e-9);   // deg -> rad
   EXPECT_NEAR(r.state("elbow_joint/position"), 90 * kDeg, 1e-9);
   EXPECT_EQ(r.state("fr_status/fault_class"), 0.0);
-  EXPECT_EQ(r.state("fr_status/enabled"), 1.0);
-  EXPECT_EQ(r.state("fr_status/servo_queue_len"), 7.0);
+  EXPECT_FALSE(r.rm->state_interface_exists("fr_status/main_code"));   // the rest is in ~/status
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {
+      return Rig::value(s, "enabled") == "1" && Rig::value(s, "servo_queue_len") == "7";}));
 }
 
 TEST(HardwareInterface, ActivationStartsAtTheActualPositionAndStreamsCommands)
@@ -309,8 +359,8 @@ TEST(HardwareInterface, RobotFaultStopsTheStreamAndRecoversOnlyByTheOperator)
   EXPECT_EQ(r.fake.servoJ().size(), frozen);                   // nothing is sent while faulted
   EXPECT_LT(frozen, before + 10);
   EXPECT_EQ(r.state("fr_status/fault_class"), 1.0);
-  EXPECT_EQ(r.state("fr_status/main_code"), 1.0);              // codes exported as they are
-  EXPECT_EQ(r.state("fr_status/sub_code"), 23.0);
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {                // codes reported as they are
+      return Rig::value(s, "main_code") == "1" && Rig::value(s, "sub_code") == "23";}));
   EXPECT_EQ(r.fake.count("ResetAllError"), 0);                 // F3: never by itself
   EXPECT_EQ(r.fake.stops(), 0);                                // the firmware stops by itself
 
@@ -337,7 +387,7 @@ TEST(HardwareInterface, EmergencyStopRefusesAnyReset)
   }
   ASSERT_TRUE(deactivated);
   EXPECT_EQ(r.state("fr_status/fault_class"), 2.0);
-  EXPECT_EQ(r.state("fr_status/estop"), 1.0);
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "estop") == "1";}));
   const auto [ok, message] = r.reset();
   EXPECT_FALSE(ok);
   EXPECT_NE(message.find("emergency stop"), std::string::npos) << message;
@@ -378,6 +428,90 @@ TEST(HardwareInterface, LostStateConnectionIsACommunicationFault)
   EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_UNCONFIGURED);
 }
 
+// ---- the status topic (docs/fault_handling.md section 7) ----
+
+TEST(StatusTopic, IsPublishedInEveryLifecycleStateAndFollowsFaults)
+{
+  Rig r;
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {return !s.values.empty();}));   // unconfigured: no connection yet
+  EXPECT_EQ(Rig::value(r.status(), "hardware_state"), "unconfigured");
+  EXPECT_EQ(Rig::value(r.status(), "link"), "down");
+
+  ASSERT_TRUE(r.configure());
+  r.run(5);
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "hardware_state") == "inactive";}));
+  EXPECT_EQ(Rig::value(r.status(), "link"), "up");
+  EXPECT_EQ(r.status().level, diagnostic_msgs::msg::DiagnosticStatus::OK);
+
+  ASSERT_TRUE(r.activate());
+  r.run(5);
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "hardware_state") == "active";}));
+  EXPECT_EQ(Rig::value(r.status(), "fault_class"), "0");
+
+  r.fake.edit([](auto & s) {s.main_code = 1; s.sub_code = 23;});
+  for (int i = 0; i < 30 && r.stateId() == lc::State::PRIMARY_STATE_ACTIVE; ++i) {r.cycle();}
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "fault_class") == "1";}));
+  EXPECT_EQ(Rig::value(r.status(), "main_code"), "1");
+  EXPECT_EQ(Rig::value(r.status(), "sub_code"), "23");
+  EXPECT_EQ(Rig::value(r.status(), "hardware_state"), "inactive");
+  EXPECT_EQ(r.status().level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
+}
+
+TEST(StatusTopic, LinkLossThenTheControllersOwnFaultIsSeenWithoutAnyCommand)
+{
+  Rig r;
+  ASSERT_TRUE(r.configure());
+  ASSERT_TRUE(r.activate());
+  r.run(5);
+
+  r.fake.drop_state = true;                            // the controller vanishes (power cut)
+  bool errored = false;
+  for (int i = 0; i < 40 && !errored; ++i) {
+    errored = r.cycle().result == return_type::ERROR;
+  }
+  ASSERT_TRUE(errored);
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "fault_class") == "3";}));
+  const auto down = r.status();
+  EXPECT_EQ(Rig::value(down, "link"), "down");
+  EXPECT_EQ(Rig::value(down, "hardware_state"), "unconfigured");
+  EXPECT_NE(down.message.find("interrupted"), std::string::npos) << down.message;
+  EXPECT_NE(Rig::value(down, "since"), "<missing>");
+
+  // From here on the driver may only watch the state stream: nothing else is touched.
+  std::this_thread::sleep_for(500ms);                  // the cleanup thread has closed everything
+  const auto calls = r.fake.xmlrpcCalls();
+  const auto servoj = r.fake.servoJ().size();
+  const int xmlrpc_conn = r.fake.xmlrpcConnections(), instant_conn = r.fake.instantConnections();
+  const int stops = r.fake.stops(), states = r.fake.stateConnections();
+
+  r.fake.edit([](auto & s) {s.main_code = 1; s.sub_code = 149; s.safety_stop0_state = 1; s.rbtEnableState = 0;});
+  r.fake.drop_state = false;                           // the controller is back and reports its fault
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "fault_class") == "1";}, 6s));
+  const auto fault = r.status();
+  EXPECT_EQ(Rig::value(fault, "main_code"), "1");
+  EXPECT_EQ(Rig::value(fault, "sub_code"), "149");
+  EXPECT_EQ(Rig::value(fault, "link"), "up");
+  EXPECT_EQ(Rig::value(fault, "hardware_state"), "unconfigured");   // moving again stays the operator's call
+  EXPECT_NE(Rig::value(fault, "previous").find("communication fault"), std::string::npos)
+    << Rig::value(fault, "previous");
+  EXPECT_GT(r.fake.stateConnections(), states);        // it reconnected the state stream...
+
+  EXPECT_EQ(r.fake.xmlrpcCalls(), calls);              // ...and nothing else: no XML-RPC,
+  EXPECT_EQ(r.fake.xmlrpcConnections(), xmlrpc_conn);
+  EXPECT_EQ(r.fake.instantConnections(), instant_conn);  // no 8080,
+  EXPECT_EQ(r.fake.servoJ().size(), servoj);           // no ServoJ,
+  EXPECT_EQ(r.fake.stops(), stops);
+  EXPECT_EQ(r.fake.count("ResetAllError"), 0);         // and never a reset
+
+  // The operator can still configure again (the monitor lets go of the state stream).
+  r.fake.edit([](auto & s) {s.main_code = 0; s.sub_code = 0; s.safety_stop0_state = 0; s.rbtEnableState = 1;});
+  ASSERT_TRUE(r.configure());
+  ASSERT_TRUE(r.activate());
+  r.run(5);
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {
+      return Rig::value(s, "hardware_state") == "active" && Rig::value(s, "fault_class") == "0";}));
+}
+
 TEST(HardwareInterface, StepCheckRefusesAJumpAndTheFirmwareNeverSeesIt)
 {
   Rig r;
@@ -396,7 +530,8 @@ TEST(HardwareInterface, StepCheckRefusesAJumpAndTheFirmwareNeverSeesIt)
   }
   r.run(3);
   EXPECT_EQ(r.state("fr_status/fault_class"), 1.0);
-  EXPECT_EQ(r.state("fr_status/main_code"), 0.0);  // our own protective stop, not the firmware's
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {   // our own protective stop, not the firmware's
+      return Rig::value(s, "fault_class") == "1" && Rig::value(s, "main_code") == "0";}));
   EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_INACTIVE);
 }
 
@@ -444,6 +579,25 @@ TEST(HardwareInterface, DeactivationFlushesTheFirmwareQueueWithStop)
   EXPECT_EQ(r.fake.count("ServoMoveEnd"), 1);
   ASSERT_TRUE(r.activate());                        // and it can be started again
   EXPECT_EQ(r.fake.count("ServoMoveStart"), 2);
+}
+
+// The status timer and the services run on other threads than the lifecycle callbacks; nothing they
+// use may be replaced underneath them (run under ThreadSanitizer to see a race, not only a crash).
+TEST(HardwareInterface, ReconfiguringWhileTheStatusTimerRunsIsSafe)
+{
+  Rig r("", 125, true);
+  for (int i = 0; i < 15; ++i) {
+    ASSERT_TRUE(r.configure()) << i;
+    r.run(2);
+    if (i % 3 == 0) {
+      ASSERT_TRUE(r.activate()) << i;
+      r.run(2);
+      ASSERT_TRUE(r.go(lc::State::PRIMARY_STATE_INACTIVE, "inactive")) << i;
+    }
+    ASSERT_TRUE(r.go(lc::State::PRIMARY_STATE_UNCONFIGURED, "unconfigured")) << i;   // cleanup
+    std::this_thread::sleep_for(30ms);
+  }
+  EXPECT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "hardware_state") == "unconfigured";}));
 }
 
 TEST(HardwareInterface, InconsistentRatesAreRejectedAtInit)

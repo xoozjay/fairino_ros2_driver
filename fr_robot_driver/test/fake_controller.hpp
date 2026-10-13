@@ -131,6 +131,11 @@ public:
     return n;
   }
   int stops() const {return stops_.load();}
+  // every XML-RPC call so far, and how many connections each port has accepted
+  std::size_t xmlrpcCalls() const {std::lock_guard<std::mutex> l(m_); return methods_.size();}
+  int xmlrpcConnections() const {return xmlrpc_connections_.load();}
+  int instantConnections() const {return instant_connections_.load();}
+  int stateConnections() const {return state_connections_.load();}
   fr_client_library::RobotState384 state() const {std::lock_guard<std::mutex> l(m_); return st_;}
 
 private:
@@ -144,6 +149,7 @@ private:
 
   void serveXmlRpc(int fd, const std::atomic<bool> & stop)
   {
+    ++xmlrpc_connections_;
     std::string in;
     char buf[2048];
     while (!stop) {
@@ -219,6 +225,7 @@ private:
 
   void serveState(int fd, const std::atomic<bool> & stop)
   {
+    ++state_connections_;
     uint8_t cnt = 0;
     while (!stop && !drop_state) {
       if (!silent) {
@@ -261,6 +268,7 @@ private:
 
   void serveInstant(int fd, const std::atomic<bool> & stop)
   {
+    ++instant_connections_;
     std::string in;
     char buf[256];
     while (!stop) {
@@ -287,6 +295,7 @@ private:
   std::vector<std::array<double, 6>> servoj_;
   std::vector<std::string> methods_;
   std::atomic<int> stops_{0};
+  std::atomic<int> xmlrpc_connections_{0}, instant_connections_{0}, state_connections_{0};
 
   TcpServer xmlrpc_;   // last: their threads use the members above
   TcpServer state_;

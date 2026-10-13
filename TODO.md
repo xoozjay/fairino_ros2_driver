@@ -12,6 +12,8 @@
       （正装真机起始位形：0.101 mm / 0.0005°，`flange_cur_pos` 单位 mm/deg）
 - [ ] 非正装（倾斜、倒装）时的基坐标系约定 —— done when: 真机确认 `flange_cur_pos` 的参考系
 - [ ] 型号表除 FR5 V6.0 外各行的真实型号字符串 —— done when: 实物或厂商确认
+- [ ] 伺服时钟偏差补偿的 trim（`ServoStats::trim_ppm`）不可观测，撞 ±1 % 限幅时只表现为队列漂移 —— done when:
+      决定是否加到 `~/status`
 - [ ] 状态帧新鲜度只看接收时间，不查 `frame_cnt` 递增：控制器发合法但帧号冻结的帧时漏判（风险极低）
       —— done when: 决定是否在 `read()` 里加帧号检查
 - [ ] 真机双机（`dual_fr_cell.launch.py`，显式 `alice_ip` / `bob_ip`）—— done when: 两台真机跑通
@@ -48,6 +50,8 @@
 
 - **`ServoJ` 往返最大 7.7 ms，接近 8 ms 周期**（真机 S17）：网络更差时发送会落后，`ServoSender` 追赶、
   固件队列吸收 —— impact: 队列抖动变大，`prefill` 余量被吃掉
+- **急停在本硬件上表现为控制箱断电**（F4）：断线期间驱动只能报"链路中断"，分不清急停、掉电与网络，
+  要等控制器重新上线、`~/status` 报 1/149 才能确定 —— impact: 断线那 ~20 s 内上层只知道"断了"
 - **控制器 20004 与 8080 单客户端**：驱动运行时诊断工具（`fr_probe`、`fr_servo_bench`）连不上，
   排障期间只能停驱动 —— impact: 真机排障窗口
 - **`ServoJ` 不受全局速度/加速度限制**（[docs/sdk_quirks.md](docs/sdk_quirks.md) S14）：

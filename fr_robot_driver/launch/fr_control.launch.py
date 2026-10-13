@@ -215,6 +215,6 @@ def generate_launch_description():
                               description='real hardware: activate the component after startup '
                                           '(false: leave it inactive, e.g. to reset a fault first)'),
         DeclareLaunchArgument('mock_gpio_commands', default_value='false',
-                              description='mock only: loop-back command interfaces on fr_status'),
+                              description='mock only: a loop-back command interface on fr_status/fault_class'),
         OpaqueFunction(function=launch_setup),
     ])

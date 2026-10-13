@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.8)
 project(fr_robot_driver)
 
 find_package(ament_cmake REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(fr_client_library REQUIRED)
 find_package(hardware_interface REQUIRED)
 find_package(pluginlib REQUIRED)
@@ -16,6 +17,7 @@ target_include_directories(fr_robot_hardware_interface PUBLIC
 target_compile_features(fr_robot_hardware_interface PUBLIC cxx_std_17)
 target_compile_options(fr_robot_hardware_interface PRIVATE -Wall -Wextra -Wpedantic -Werror)
 target_link_libraries(fr_robot_hardware_interface PUBLIC
+  ${diagnostic_msgs_TARGETS}
   fr_client_library::fr_client_library
   hardware_interface::hardware_interface
   pluginlib::pluginlib
@@ -47,6 +49,9 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_reset_policy test/test_reset_policy.cpp)
   target_link_libraries(test_reset_policy fr_robot_hardware_interface)
+
+  ament_add_gtest(test_status_report test/test_status_report.cpp)
+  target_link_libraries(test_status_report fr_robot_hardware_interface)
 
   ament_add_gtest(test_kinematics test/test_kinematics.cpp)
   target_include_directories(test_kinematics PRIVATE include)

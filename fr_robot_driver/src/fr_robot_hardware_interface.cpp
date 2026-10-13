@@ -30,16 +30,12 @@ constexpr double kRadToDeg = 180.0 / M_PI;
 // standing, the readback stays within 0.002 deg)
 constexpr double kAtRestDeg = 0.01;
 
-// State interfaces of the <gpio name="<tf_prefix>fr_status"> component (docs/fault_handling.md 7).
-constexpr const char * kStatusInterfaces[] = {
-  "fault_class", "estop", "safety_stop0", "safety_stop1", "collision", "main_code", "sub_code",
-  "enabled", "robot_mode", "robot_state", "servo_queue_len"};
-
 }  // namespace
 
 FrRobotHardwareInterface::~FrRobotHardwareInterface()
 {
   // the node's callbacks first: they use the connections
+  if (status_timer_) {status_timer_->cancel();}
   if (node_) {
     if (auto exec = executor_.lock()) {
       exec->remove_node(node_->get_node_base_interface());
@@ -94,23 +90,20 @@ CallbackReturn FrRobotHardwareInterface::on_init(
     joint_names_.push_back(joint.name);
   }
 
-  // ---- gpio fr_status ----
-  status_prefix_ = param("tf_prefix", "") + "fr_status";
+  // ---- gpio fr_status: the fault class only; everything else is in `~/status` (docs/fault_handling.md 7)
+  const std::string gpio_name = param("tf_prefix", "") + "fr_status";
   const auto gpio = std::find_if(info.gpios.begin(), info.gpios.end(),
-      [&](const auto & g) {return g.name == status_prefix_;});
-  if (gpio == info.gpios.end()) {
-    RCLCPP_ERROR(log, "the URDF has no <gpio name=\"%s\">", status_prefix_.c_str());
+      [&](const auto & g) {return g.name == gpio_name;});
+  const auto has_fault_class = [&] {
+      return std::any_of(gpio->state_interfaces.begin(), gpio->state_interfaces.end(),
+               [](const auto & i) {return i.name == "fault_class";});
+    };
+  if (gpio == info.gpios.end() || !has_fault_class()) {
+    RCLCPP_ERROR(log, "the URDF needs <gpio name=\"%s\"> with the state interface 'fault_class'",
+      gpio_name.c_str());
     return CallbackReturn::ERROR;
   }
-  for (const char * want : kStatusInterfaces) {
-    const bool found = std::any_of(gpio->state_interfaces.begin(), gpio->state_interfaces.end(),
-        [&](const auto & i) {return i.name == want;});
-    if (!found) {
-      RCLCPP_ERROR(log, "<gpio name=\"%s\"> lacks the state interface '%s'", status_prefix_.c_str(), want);
-      return CallbackReturn::ERROR;
-    }
-  }
-  status_prefix_ += "/";
+  fault_class_interface_ = gpio_name + "/fault_class";
 
   // ---- parameters ----
   bool ok = true;
@@ -143,6 +136,7 @@ CallbackReturn FrRobotHardwareInterface::on_init(
   rt_priority_ = integer("rt_priority", 0, 0, 99);
   state_period_ms_ = integer("state_period_ms", 8, 8, 1000);  // simulator: below 8 is refused
   comm_timeout_periods_ = integer("comm_timeout_periods", 3, 1, 1000);
+  comm_timeout_ = std::chrono::milliseconds(state_period_ms_ * comm_timeout_periods_);
   const int update_rate = integer("update_rate_hz", 1000 / std::max(1, cmd_t_ms_), 1, 1000);
   allow_unverified_version_ = hardware_interface::parse_bool(param("allow_unverified_version", "false"));
   model_ = param("model", "");
@@ -222,9 +216,15 @@ CallbackReturn FrRobotHardwareInterface::on_init(
       "~/reset_error",
       [this](const std::shared_ptr<std_srvs::srv::Trigger::Request> req,
       std::shared_ptr<std_srvs::srv::Trigger::Response> res) {onResetRequest(req, res);});
+    // `~/status`: lives as long as this node, whatever the hardware's lifecycle state is
+    status_tracker_.identify(info.name, ip_);
+    status_pub_ = node_->create_publisher<diagnostic_msgs::msg::DiagnosticStatus>(
+      "~/status", rclcpp::QoS(1).transient_local());
+    publishDiagnostics();
+    status_timer_ = node_->create_wall_timer(std::chrono::milliseconds(100), [this] {publishDiagnostics();});
     exec->add_node(node_->get_node_base_interface());
   } else {
-    RCLCPP_WARN(log, "no executor: the reset_error service is not available");
+    RCLCPP_WARN(log, "no executor: the reset_error service and the status topic are not available");
   }
   return CallbackReturn::SUCCESS;
 }
@@ -232,9 +232,10 @@ CallbackReturn FrRobotHardwareInterface::on_init(
 CallbackReturn FrRobotHardwareInterface::on_configure(const rclcpp_lifecycle::State &)
 {
   const auto log = get_logger();
-  joinCleanup();
+  joinCleanup();   // also ends the status link monitor, which holds the state port
   closeConnections();
   fault_class_ = FaultClass::None;
+  comm_reason_ = CommReason::None;
   step_fault_ = false;
   logged_class_ = FaultClass::None;
   frame_ = StateSnapshot{};
@@ -310,7 +311,6 @@ CallbackReturn FrRobotHardwareInterface::on_configure(const rclcpp_lifecycle::St
       closeConnections();
       return CallbackReturn::FAILURE;
     }
-    comm_timeout_ = std::chrono::milliseconds(state_period_ms_ * comm_timeout_periods_);
     {
       StateSnapshot first;
       std::string why;
@@ -351,6 +351,7 @@ CallbackReturn FrRobotHardwareInterface::on_configure(const rclcpp_lifecycle::St
     return CallbackReturn::FAILURE;
   }
   configured_ = true;
+  setHardwareState(HardwareState::Inactive);
   RCLCPP_INFO(log, "configured: %s, ServoJ every %d ms (every %d controller cycle(s)), prefill %d",
     ip_.c_str(), cmd_t_ms_, ratio_, prefill_);
   return CallbackReturn::SUCCESS;
@@ -406,6 +407,7 @@ CallbackReturn FrRobotHardwareInterface::on_activate(const rclcpp_lifecycle::Sta
   write_count_ = 0;
   step_fault_ = false;
   active_ = true;
+  setHardwareState(HardwareState::Active);
   RCLCPP_INFO(log, "activated");
   return CallbackReturn::SUCCESS;
 }
@@ -414,6 +416,7 @@ CallbackReturn FrRobotHardwareInterface::on_deactivate(const rclcpp_lifecycle::S
 {
   // May run on the realtime thread (write() returned DEACTIVATE): no blocking here.
   active_ = false;
+  setHardwareState(HardwareState::Inactive);
   sender_->halt();
   // With a fault the firmware stops by itself; otherwise flush its queue with STOP first (S15, S16).
   startCleanup(fault_class_.load() == FaultClass::None && !step_fault_.load(), false);
@@ -424,6 +427,8 @@ CallbackReturn FrRobotHardwareInterface::on_cleanup(const rclcpp_lifecycle::Stat
 {
   joinCleanup();
   closeConnections();
+  comm_reason_ = CommReason::None;   // the operator's own decision, not a fault
+  setHardwareState(HardwareState::Unconfigured);
   return CallbackReturn::SUCCESS;
 }
 
@@ -431,14 +436,17 @@ CallbackReturn FrRobotHardwareInterface::on_shutdown(const rclcpp_lifecycle::Sta
 {
   joinCleanup();
   closeConnections();
+  setHardwareState(HardwareState::Finalized);
   return CallbackReturn::SUCCESS;
 }
 
 CallbackReturn FrRobotHardwareInterface::on_error(const rclcpp_lifecycle::State &)
 {
-  // Runs inside read()/write() (realtime thread). Stop, close, do not reset, do not reconnect.
+  // Runs inside read()/write() (realtime thread). Stop, close, do not reset, do not reconnect the
+  // robot. Only the read-only state stream is watched again (monitorLink) for the status topic.
   active_ = false;
   configured_ = false;
+  setHardwareState(HardwareState::Unconfigured);
   sender_->halt();
   startCleanup(false, true);
   return CallbackReturn::SUCCESS;  // -> UNCONFIGURED
@@ -471,8 +479,10 @@ bool FrRobotHardwareInterface::flangeConsistent(const RobotState384 & s, std::st
 
 void FrRobotHardwareInterface::startCleanup(bool send_stop, bool close_all)
 {
-  if (cleanup_thread_.joinable()) {
-    cleanup_thread_.join();
+  joinCleanup();
+  {
+    std::lock_guard<std::mutex> lock(stop_mutex_);
+    cleanup_stop_ = false;
   }
   cleanup_thread_ = std::thread([this, send_stop, close_all] {
       try {
@@ -486,19 +496,72 @@ void FrRobotHardwareInterface::startCleanup(bool send_stop, bool close_all)
         sender_->stop();  // ServoMoveEnd: not a sign that the robot stopped (S6)
         if (close_all) {
           closeConnections();
+          monitorLink();  // returns when joinCleanup() asks
         }
       } catch (const std::exception & e) {
         RCLCPP_ERROR(get_logger(), "cleanup thread ended early: %s", e.what());
       } catch (...) {
         RCLCPP_ERROR(get_logger(), "cleanup thread ended early: unknown exception");
       }
+      monitoring_ = false;
     });
 }
 
 void FrRobotHardwareInterface::joinCleanup()
 {
+  {
+    std::lock_guard<std::mutex> lock(stop_mutex_);
+    cleanup_stop_ = true;
+  }
+  stop_cv_.notify_all();
   if (cleanup_thread_.joinable()) {
     cleanup_thread_.join();
+  }
+}
+
+void FrRobotHardwareInterface::monitorLink()
+{
+  monitoring_ = true;
+  std::unique_lock<std::mutex> lock(stop_mutex_);
+  while (!cleanup_stop_) {
+    if (!receiver_->running()) {
+      lock.unlock();
+      receiver_->start(version_);  // fails quietly while the controller is away
+      lock.lock();
+    }
+    stop_cv_.wait_for(lock, std::chrono::seconds(2), [this] {return cleanup_stop_;});
+  }
+  lock.unlock();
+  receiver_->stop();  // frees the single-client state port for the next configure
+}
+
+void FrRobotHardwareInterface::publishDiagnostics()
+{
+  StatusInput in;
+  in.hardware = hardware_state_.load();
+  in.comm = comm_reason_.load();
+  in.step_fault = step_fault_.load();
+
+  StateSnapshot snap;
+  if (receiver_->latest(snap)) {
+    const auto age = std::chrono::steady_clock::now() - snap.received_at;
+    in.frame_age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(age).count();
+    // read() judges freshness at the controller's pace; this only has to tell up from down. Between
+    // an error and the link monitor's restart of the stream the frames mean nothing.
+    const bool trusted = monitoring_.load() || in.hardware != HardwareState::Unconfigured;
+    const auto max_age = std::max<std::chrono::steady_clock::duration>(
+      comm_timeout_, std::chrono::milliseconds(500));
+    if (trusted && receiver_->running() && snap.fresh(max_age)) {
+      in.link_up = true;
+      in.frame = snap.state;
+    }
+  }
+
+  const auto now = std::chrono::steady_clock::now();
+  const bool changed = status_tracker_.update(in, std::chrono::system_clock::now());
+  if (changed || now - status_published_at_ >= std::chrono::seconds(1)) {
+    status_pub_->publish(status_tracker_.status());
+    status_published_at_ = now;
   }
 }
 
@@ -534,22 +597,6 @@ void FrRobotHardwareInterface::publishJoints(const RobotState384 & s)
   }
 }
 
-void FrRobotHardwareInterface::publishStatus(const RobotState384 & s, FaultClass fc)
-{
-  const auto put = [this](const char * name, double v) {set_state(status_prefix_ + name, v);};
-  put("fault_class", static_cast<double>(fc));
-  put("estop", s.EmergencyStop);
-  put("safety_stop0", s.safety_stop0_state);
-  put("safety_stop1", s.safety_stop1_state);
-  put("collision", s.collisionState);
-  put("main_code", s.main_code);   // error codes are exported as they are, never translated
-  put("sub_code", s.sub_code);
-  put("enabled", s.rbtEnableState == 1 ? 1.0 : 0.0);
-  put("robot_mode", s.robot_mode);
-  put("robot_state", s.robot_state);
-  put("servo_queue_len", fr_client_library::servoQueueLength(s));
-}
-
 return_type FrRobotHardwareInterface::read(const rclcpp::Time &, const rclcpp::Duration &)
 {
   receiver_->tryLatest(frame_);   // the receiver is busy this instant: keep the previous frame
@@ -562,7 +609,9 @@ return_type FrRobotHardwareInterface::read(const rclcpp::Time &, const rclcpp::D
   // COMM: the link cannot be trusted, so nothing in the frames can be (R3, R5)
   if (stale || link_lost || sender_dead) {
     fault_class_ = FaultClass::Comm;
-    set_state(status_prefix_ + "fault_class", static_cast<double>(FaultClass::Comm));
+    comm_reason_ = stale ? CommReason::NoFrame :
+      link_lost ? CommReason::LinkLost : CommReason::ServoFailed;
+    set_state(fault_class_interface_, static_cast<double>(FaultClass::Comm));
     logFault(FaultClass::Comm, stale ? "no state frame in time" :
       link_lost ? "state connection lost" : "servo stream connection failed");
     return return_type::ERROR;  // -> on_error -> UNCONFIGURED
@@ -570,19 +619,15 @@ return_type FrRobotHardwareInterface::read(const rclcpp::Time &, const rclcpp::D
 
   const RobotState384 & s = snap.state;
 
-  FaultClass fc = fr_client_library::classifyState(s);
-  std::string detail = fr_client_library::describeFault(s);
-  if (step_fault_.load() && fc == FaultClass::None) {
-    fc = FaultClass::RobotFault;  // our own protective stop stays until the next activation
-    detail = "a command was refused by the step check";
-  }
+  const Fault fault = effectiveFault(s, step_fault_.load());
+  const FaultClass fc = fault.fault_class;
   fault_class_ = fc;
   publishJoints(s);
-  publishStatus(s, fc);
+  set_state(fault_class_interface_, static_cast<double>(fc));
   if (active_.load() && fc != FaultClass::None) {
     sender_->halt();  // stop at once; write() answers DEACTIVATE
   }
-  logFault(fc, detail);
+  logFault(fc, fault.detail);
   return return_type::OK;
 }
 
@@ -619,6 +664,7 @@ return_type FrRobotHardwareInterface::write(const rclcpp::Time &, const rclcpp::
   if (!sender_->enqueue(target)) {
     // full queue or dead sender: the stream to the controller is broken
     fault_class_ = FaultClass::Comm;
+    comm_reason_ = CommReason::EnqueueFailed;
     return return_type::ERROR;
   }
   last_cmd_deg_ = target;

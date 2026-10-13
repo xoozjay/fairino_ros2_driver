@@ -64,7 +64,8 @@ ros2_control 驱动 `fr_robot_driver`、自研 C++ 客户端库 `fr_client_libra
 - 验证命令：launch 后 `ros2 control list_controllers` 应为 active，
   `ros2 topic echo /<ns>/joint_states --once` 应有初始位形值，
   发 FollowJointTrajectory 后读回轨迹终点；
-- 真机分支同样的验证，加 `use_mock_hardware:=false ip:=<控制器>`：硬件应为 `active`、`fr_status/fault_class = 0`；
+- 真机分支同样的验证，加 `use_mock_hardware:=false ip:=<控制器>`：硬件应为 `active`、`fr_status/fault_class = 0`，
+  `ros2 topic echo /<ns>/<tf_prefix>fr_robot_hw/status --once` 为 OK、`link: up`；
   再按 `fr_robot_driver/README.md` 的"故障与恢复"演练一次（步长检查、`reset_error`、重新激活）；
 - 插件的 `on_deactivate`/`on_error` 由 ros2_control 在实时线程内同步调用，**不得做网络操作**（交给清理线程）。
 

@@ -14,6 +14,7 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>controller_manager</depend>
+  <depend>diagnostic_msgs</depend>
   <depend>fr_client_library</depend>
   <depend>fr_description</depend>
   <depend>hardware_interface</depend>

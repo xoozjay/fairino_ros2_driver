@@ -22,9 +22,9 @@
       initial_positions_file  : YAML with initial_positions map (unprefixed joint names)
       mock_sensor_commands    : mock GPIO sensor commands (default false)
 
-    Both branches expose the same <gpio name="<tf_prefix>fr_status"> state interfaces
-    (docs/fault_handling.md section 7). With the mock, mock_gpio_commands:=true adds command
-    interfaces that loop back into them, to rehearse fault handling in upper layers.
+    Both branches expose the same <gpio name="<tf_prefix>fr_status"> with one state interface,
+    fault_class (docs/fault_handling.md section 7). With the mock, mock_gpio_commands:=true adds a
+    command interface that loops back into it, to rehearse fault handling in upper layers.
 
     Real hardware (fr_robot_driver/FrRobotHardwareInterface) parameters:
       ip                         : controller address (default 192.168.58.2)
@@ -61,16 +61,6 @@
   <xacro:macro name="_fr_status_gpio" params="tf_prefix">
     <gpio name="${tf_prefix}fr_status">
       <state_interface name="fault_class"><param name="initial_value">0.0</param></state_interface>
-      <state_interface name="estop"><param name="initial_value">0.0</param></state_interface>
-      <state_interface name="safety_stop0"><param name="initial_value">0.0</param></state_interface>
-      <state_interface name="safety_stop1"><param name="initial_value">0.0</param></state_interface>
-      <state_interface name="collision"><param name="initial_value">0.0</param></state_interface>
-      <state_interface name="main_code"><param name="initial_value">0.0</param></state_interface>
-      <state_interface name="sub_code"><param name="initial_value">0.0</param></state_interface>
-      <state_interface name="enabled"><param name="initial_value">1.0</param></state_interface>
-      <state_interface name="robot_mode"><param name="initial_value">0.0</param></state_interface>
-      <state_interface name="robot_state"><param name="initial_value">1.0</param></state_interface>
-      <state_interface name="servo_queue_len"><param name="initial_value">0.0</param></state_interface>
     </gpio>
   </xacro:macro>
 
