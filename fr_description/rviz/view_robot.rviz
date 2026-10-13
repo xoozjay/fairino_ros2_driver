@@ -9,9 +9,11 @@ Visualization Manager:
     - Class: rviz_default_plugins/RobotModel
       Description Topic:
         Value: /robot_description
+      Enabled: true
       Name: RobotModel
       TF Prefix: ""
     - Class: rviz_default_plugins/TF
+      Enabled: false
       Name: TF
       Show Arrows: false
       Show Axes: true
@@ -32,3 +34,8 @@ Visualization Manager:
       Name: Current View
       Pitch: 0.4
       Yaw: 0.8
+Window Geometry:
+  X: 0
+  Y: 0
+  Width: 2560
+  Height: 1440
