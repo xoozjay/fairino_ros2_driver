@@ -239,6 +239,36 @@ TEST(RobotApiControl, RequestsMatchTheSdk)
       D("0.000000") + D("0.000000") + D("0.008000") + D("0.000000") + D("0.000000") + I(7)));
 }
 
+TEST(RobotApiControl, GripperRequestsMatchTheSdk)
+{
+  ScriptedController c({kOk, kOk});
+  RobotApi api("127.0.0.1", c.port(), fast());
+  ASSERT_TRUE(api.connect());
+  EXPECT_TRUE(api.actGripper(1).ok());
+  EXPECT_TRUE(api.moveGripper(1, 50, 20, 30, 5000).ok());
+  api.close();
+
+  const auto & r = c.requests;
+  ASSERT_EQ(r.size(), 2u);
+  EXPECT_EQ(r[0], call("ActGripper", I(1) + I(1)));
+  // index, pos, vel, force, max_time, block (1 = non-blocking), type, rotNum (double), rotVel, rotTorque
+  EXPECT_EQ(
+    r[1], call("MoveGripper", I(1) + I(50) + I(20) + I(30) + I(5000) + I(1) + I(0) + D("0.000000") +
+    I(0) + I(0)));
+}
+
+TEST(RobotApiControl, GripperArgumentsOutOfRangeAreRefusedBeforeSending)
+{
+  ScriptedController c({});
+  RobotApi api("127.0.0.1", c.port(), fast());
+  ASSERT_TRUE(api.connect());
+  EXPECT_EQ(api.moveGripper(1, 101, 50, 20, 1000).error, ApiError::InvalidArgument);
+  EXPECT_EQ(api.moveGripper(1, 50, -1, 20, 1000).error, ApiError::InvalidArgument);
+  EXPECT_EQ(api.moveGripper(1, 50, 50, 120, 1000).error, ApiError::InvalidArgument);
+  EXPECT_EQ(api.moveGripper(1, 50, 50, 20, 30001).error, ApiError::InvalidArgument);
+  EXPECT_TRUE(api.connected());
+}
+
 TEST(RobotApiControl, ControllerErrorCodeIsReported)
 {
   ScriptedController c({xmlResponse("<value><i4>112</i4></value>")});

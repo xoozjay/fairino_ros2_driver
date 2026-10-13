@@ -91,6 +91,17 @@ public:
   // acc, vel, filterT and gain are "not opened" in the SDK and sent as 0; no external axes (zeros).
   ApiStatus servoJ(const JointArray & joint_deg, double cmd_t, int id = 0);
 
+  // ---- end-effector gripper (sdk_quirks G1-G7) ----
+
+  // ActGripper(index, 1). Activation opens the gripper to its full stroke whatever it holds (G2):
+  // only on an operator's explicit request, never automatically. Returns before the activation is
+  // done; the state frame's gripper_active shows when it is (G5). Reset (action 0) is not offered.
+  ApiStatus actGripper(int index);
+  // MoveGripper(index, pos, vel, force, max_time, block = 1 (non-blocking), type 0 (parallel),
+  // rotNum 0.0, rotVel 0, rotTorque 0). pos, vel, force in percent [0, 100] (pos 100 = fully
+  // open), max_time in ms [0, 30000]; anything else is refused before sending.
+  ApiStatus moveGripper(int index, int position, int velocity, int force, int max_time_ms);
+
 private:
   // Sends the call; on success `result` holds the decoded value.
   ApiStatus call(

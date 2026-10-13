@@ -5,6 +5,7 @@ find_package(ament_cmake REQUIRED)
 
 add_library(${PROJECT_NAME}
   src/frame_parser.cpp
+  src/gripper_sender.cpp
   src/http_connection.cpp
   src/instant_command.cpp
   src/robot_api.cpp

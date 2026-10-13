@@ -231,6 +231,19 @@ curl -s -H 'Content-Type: text/xml' http://192.168.58.2:20003/RPC2 --data \
 | B2 🔍 | 源文件为 **GB18030 + CRLF**，中文注释在 UTF-8 下乱码 | 移植时 `iconv -f GB18030 -t UTF-8` + `dos2unix` |
 | B3 🔍 | `robot_types.h` 里 `typedef int errno_t`（与 C11 Annex K / Windows 冲突），结构体 `#pragma pack(1)` | 不要在驱动公共头里暴露 SDK 头 |
 
+## 八、末端夹爪
+
+| # | 行为 | 对策 |
+|---|---|---|
+| G1 📋 | 夹爪**每个机械臂上电周期只需激活一次**：激活状态属于控制器，与 SDK 连接、客户端进程无关；控制器断电重启后才需要重新激活 | 激活前先读激活状态，已激活就不再激活 |
+| G2 📋 | **激活必然张开到满行程**，不论当前开度、手里是否夹着东西 | 绝不自动激活；激活只由操作者显式发起，发起前确认手里无物、张开路径无障碍 |
+| G3 🔍 | 激活状态可读且不需发指令：`GetGripperActivateStatus` 只是返回状态帧的 `gripper_active`（bit0–15 对应夹爪编号 0–15）与 `gripper_fault`；激活指令为 XML-RPC `ActGripper(index, action)`（`action` 0 复位、1 激活） | 读状态帧，`fr_probe` 打印 `gripper_active`/`gripper_position`/`gripper_fault` |
+| G4 📋 | **未激活时任何夹爪动作指令都只会失败**，不会隐式激活；能让夹爪张开的只有显式的 `ActGripper` | 风险集中在激活这一条指令上（见 G2） |
+| G5 📋 | **真机激活**（3.8.4.2，大寰 PGI-140，夹爪编号 1）：`ActGripper(1, 1)` 约 20 ms 返回 0（不等激活完成）；约 0.9 s 内 `gripper_active` 0x0000 → **0x0001**（编号 1 对应 bit0）；夹爪实际张开到满行程，但其后 12 s 状态帧 `gripper_position` 仍为 **0%**、`gripper_motiondone` 为 0、`gripper_fault` 为 0 | 激活后、首次 `MoveGripper` 之前，状态帧里的位置**不可信**（实际全开却报 0%） |
+| G6 📋 | **真机运动**：`MoveGripper(1, 50, 20, 20, 5000, 1, 0, 0, 0, 0)`（`block=1` 非阻塞）37 ms 返回 0；位置 96 → 50% 约 2.1 s（vel 20% 时约 22 %/s），到位后 `gripper_motiondone=1`。**位置 100% = 全开，0% = 闭合**；机械臂静止、无故障 | ROS 侧换算：开度 = `pos%`；完成以 `motiondone` 且位置到达为准 |
+| G7 📋 | `GetGripperConfig`（XML-RPC 无参数）在本机返回 `[0, 0, 3, 0, 0]`（错误码 0、厂商 0、设备 3），后来又返回 `[0, 1, 3, 0, 0]`（厂商 1），都与 SDK 头文件的编号（大寰 = 4、PGI-140 = 0）不符，但夹爪工作正常 | 驱动不读也不写；不要按头文件编号去"纠正"配置 |
+| G12 📋 | **`MoveGripper` 的速度与力参数都生效**（维护者经 SDK 实测确认） | goal 的 `velocity`、`effort` 换算成百分比照发（`fr_robot_driver/README.md` "夹爪"）；力按被夹物设置，不要一律满量程 |
+
 ---
 
 ## 驱动设计约束（由上述陷阱推出）

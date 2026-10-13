@@ -182,4 +182,19 @@ ApiStatus RobotApi::servoJ(const JointArray & joint_deg, double cmd_t, int id)
     {XmlRpcValue(std::move(joints)), XmlRpcValue(no_external_axes), 0.0, 0.0, cmd_t, 0.0, 0.0, id});
 }
 
+ApiStatus RobotApi::actGripper(int index) {return callInt("ActGripper", {index, 1});}
+
+ApiStatus RobotApi::moveGripper(int index, int position, int velocity, int force, int max_time_ms)
+{
+  const auto percent = [](int v) {return v >= 0 && v <= 100;};
+  if (!percent(position) || !percent(velocity) || !percent(force)) {
+    return error(ApiError::InvalidArgument, 0, "gripper position, velocity and force must be within [0, 100]");
+  }
+  if (max_time_ms < 0 || max_time_ms > 30000) {
+    return error(ApiError::InvalidArgument, 0, "gripper max_time must be within [0, 30000] ms");
+  }
+  // index, pos, vel, force, max_time, block, type, rotNum, rotVel, rotTorque  (SDK 3.8.4 order)
+  return callInt("MoveGripper", {index, position, velocity, force, max_time_ms, 1, 0, 0.0, 0, 0});
+}
+
 }  // namespace fr_client_library
