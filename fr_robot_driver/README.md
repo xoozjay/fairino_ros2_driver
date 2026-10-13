@@ -54,6 +54,9 @@ ros2 control set_controller_state joint_trajectory_controller active
 `fault_class`、`estop`、`safety_stop0/1`、`collision`、`main_code`、`sub_code`、`enabled`、`robot_mode`、
 `robot_state`、`servo_queue_len`（固件 ServoJ 队列占用；时钟偏差补偿使它稳态在 `prefill` 到 `prefill + 1` 之间）。
 
+可选 `rt_priority`（1–99，默认 0 = 关）：伺服发送线程用 `SCHED_FIFO`；没有权限（`CAP_SYS_NICE`、rtprio 限额）时告警并照常运行。
+不是必需的：固件队列能吸收约 `prefill × cmd_t_ms` 的调度抖动。
+
 ### 注意
 
 - **同一控制器上 20004 和 8080 都只服务一个客户端**：驱动运行时，`fr_probe`、`fr_servo_bench` 等工具收不到状态帧。

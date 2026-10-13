@@ -11,7 +11,7 @@
       tf_prefix              : link/joint prefix (default "")
       use_mock_hardware      : mock_components/GenericSystem (default true)
       initial_positions_file : ros2_control initial positions
-      ip, cmd_t_ms, prefill, update_rate_hz, namespace, allow_unverified_version,
+      ip, cmd_t_ms, prefill, rt_priority, update_rate_hz, namespace, allow_unverified_version,
       allow_unknown_model, fk_check, fk_position_tolerance_mm, fk_angle_tolerance_deg:
                              real hardware only, see fr_ros2_control.xacro
       mock_gpio_commands     : mock only, loop-back command interfaces on fr_status
@@ -25,6 +25,7 @@
   <xacro:arg name="ip" default="192.168.58.2"/>
   <xacro:arg name="cmd_t_ms" default="8"/>
   <xacro:arg name="prefill" default="3"/>
+  <xacro:arg name="rt_priority" default="0"/>
   <xacro:arg name="update_rate_hz" default="125"/>
   <xacro:arg name="namespace" default=""/>
   <xacro:arg name="allow_unverified_version" default="false"/>
@@ -52,6 +53,7 @@
       ip="$(arg ip)"
       cmd_t_ms="$(arg cmd_t_ms)"
       prefill="$(arg prefill)"
+      rt_priority="$(arg rt_priority)"
       update_rate_hz="$(arg update_rate_hz)"
       namespace="$(arg namespace)"
       allow_unverified_version="$(arg allow_unverified_version)"

@@ -29,6 +29,7 @@
     Real hardware (fr_robot_driver/FrRobotHardwareInterface) parameters:
       ip                         : controller address (default 192.168.58.2)
       cmd_t_ms / prefill         : ServoJ cmdT in whole ms (default 8) / standing segments at start (3)
+      rt_priority                : SCHED_FIFO priority (1-99) of the servo sender thread; 0 = off (default)
       update_rate_hz             : controller_manager update rate; update_rate_hz * cmd_t_ms / 1000
                                    must be an integer >= 1 (default 1000 / cmd_t_ms)
       namespace                  : namespace of the reset_error service node
@@ -81,6 +82,7 @@
       ip:='192.168.58.2'
       cmd_t_ms:=8
       prefill:=3
+      rt_priority:=0
       update_rate_hz:=125
       namespace:=''
       allow_unverified_version:='false'
@@ -109,6 +111,7 @@
           <param name="ip">${ip}</param>
           <param name="cmd_t_ms">${cmd_t_ms}</param>
           <param name="prefill">${prefill}</param>
+          <param name="rt_priority">${rt_priority}</param>
           <param name="update_rate_hz">${update_rate_hz}</param>
           <param name="namespace">${namespace}</param>
           <param name="allow_unverified_version">${allow_unverified_version}</param>

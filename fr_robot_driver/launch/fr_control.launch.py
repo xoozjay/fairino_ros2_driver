@@ -40,6 +40,7 @@ def launch_setup(context, *args, **kwargs):
     ip = LaunchConfiguration('ip').perform(context)
     cmd_t_ms = int(LaunchConfiguration('cmd_t_ms').perform(context))
     prefill = LaunchConfiguration('prefill').perform(context)
+    rt_priority = LaunchConfiguration('rt_priority').perform(context)
     allow_unverified = LaunchConfiguration('allow_unverified_version').perform(context)
     mock_gpio_commands = LaunchConfiguration('mock_gpio_commands').perform(context)
     allow_unknown_model = LaunchConfiguration('allow_unknown_model').perform(context)
@@ -63,6 +64,7 @@ def launch_setup(context, *args, **kwargs):
         ' ip:=', ip,
         ' cmd_t_ms:=', str(cmd_t_ms),
         ' prefill:=', prefill,
+        ' rt_priority:=', rt_priority,
         ' update_rate_hz:=', str(real_update_rate),
         ' namespace:=', namespace if namespace else "''",
         ' allow_unverified_version:=', allow_unverified,
@@ -200,6 +202,8 @@ def generate_launch_description():
                               description='ServoJ cmdT in whole ms; the controller manager runs at 1000/cmd_t_ms Hz'),
         DeclareLaunchArgument('prefill', default_value='3',
                               description='standing ServoJ segments at activation (jitter buffer)'),
+        DeclareLaunchArgument('rt_priority', default_value='0',
+                              description='SCHED_FIFO priority (1-99) of the servo sender thread; 0 = off'),
         DeclareLaunchArgument('allow_unverified_version', default_value='false'),
         DeclareLaunchArgument('allow_unknown_model', default_value='false',
                               description='run with a controller model that has no kinematics here'),

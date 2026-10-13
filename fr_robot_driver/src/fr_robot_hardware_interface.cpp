@@ -140,6 +140,7 @@ CallbackReturn FrRobotHardwareInterface::on_init(
   instant_port_ = static_cast<uint16_t>(integer("instant_port", 8080, 1, 65535));
   cmd_t_ms_ = integer("cmd_t_ms", 8, 1, 1000);
   prefill_ = integer("prefill", 3, 0, 64);
+  rt_priority_ = integer("rt_priority", 0, 0, 99);
   state_period_ms_ = integer("state_period_ms", 8, 8, 1000);  // simulator: below 8 is refused
   comm_timeout_periods_ = integer("comm_timeout_periods", 3, 1, 1000);
   const int update_rate = integer("update_rate_hz", 1000 / std::max(1, cmd_t_ms_), 1, 1000);
@@ -187,6 +188,7 @@ CallbackReturn FrRobotHardwareInterface::on_init(
   fr_client_library::ServoSenderOptions sender_options;
   sender_options.cmd_t_ms = cmd_t_ms_;
   sender_options.prefill = prefill_;
+  sender_options.rt_priority = rt_priority_;
   // The sender thread may run at SCHED_FIFO: its callbacks never wait for the receiver and keep
   // their previous frame when it is busy. A stale frame is no information.
   // Drift compensation (sdk_quirks S17): the firmware queue depth.
@@ -391,6 +393,14 @@ CallbackReturn FrRobotHardwareInterface::on_activate(const rclcpp_lifecycle::Sta
     RCLCPP_ERROR(log, "cannot start the servo stream (error %d, code %d %s)",
       static_cast<int>(st.error), st.code, st.message.c_str());
     return CallbackReturn::FAILURE;
+  }
+  if (rt_priority_ > 0) {
+    if (sender_->realtimeGranted()) {
+      RCLCPP_INFO(log, "servo sender thread runs at SCHED_FIFO %d", rt_priority_);
+    } else {
+      RCLCPP_WARN(log, "servo sender: SCHED_FIFO %d refused (needs CAP_SYS_NICE or an rtprio "
+        "limit); running with the normal scheduler", rt_priority_);
+    }
   }
   last_cmd_deg_ = actual;
   write_count_ = 0;

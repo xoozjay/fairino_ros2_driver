@@ -70,6 +70,7 @@ private:
   uint16_t instant_port_ = 8080;
   int cmd_t_ms_ = 8;
   int prefill_ = 3;
+  int rt_priority_ = 0;  // SCHED_FIFO priority of the servo sender thread; 0 = off
   int state_period_ms_ = 8;
   int comm_timeout_periods_ = 3;
   int ratio_ = 1;                 // controller cycles per ServoJ segment
