@@ -22,7 +22,7 @@ FAIRINO documentation:
 
 ## License
 
-Apache-2.0
+AGPL-3.0 (see [LICENSE](LICENSE))
 
 `fr_description` is derived from the URDF set of [frcobot_ros2](https://github.com/FAIR-INNOVATION/frcobot_ros2). The upstream project does not explicitly specify a license, but [claims](assets/license-unknown.webp) that closed-source use is permitted.
 
