@@ -56,7 +56,8 @@ feedback 互相关：30°/s 最大误差 3.7°、60°/s 7.4°、90°/s 11.1°，
 
 **JTC 的速度缩放**（上游 4.42.1 `joint_trajectory_controller.cpp` 的 `update()`，读源码）：每周期从状态接口读因子；
 新轨迹首次采样时 `traj_time_ = time`，之后 `traj_time_ += period * scaling_factor_`，因子为 0 时参考停在轨迹起点；
-发给硬件的命令取 `sample(traj_time_ + update_period_)`，冻结时比参考超前一个周期（线性插值、30°/s、500 Hz 时 0.06°）；
+发给硬件的命令取 `sample(traj_time_ + update_period_)`，冻结时比参考超前一个周期（线性插值、30°/s：真机 125 Hz 时 0.24°，mock 500 Hz 时 0.06°）；
+恢复的那个周期命令取 `sample(traj_time_ + 2 × update_period_)`，比停住位置超前两个周期；
 路径容差比较 `traj_time_` 处的参考与反馈，`goal_time` 的 `time_difference` 也按 `traj_time_` 算，暂停不计入；
 取消与中止时 `set_hold_position()` 保持在实际位置（`state_current_.positions`）。
 
@@ -76,18 +77,21 @@ feedback 互相关：30°/s 最大误差 3.7°、60°/s 7.4°、90°/s 11.1°，
    - 取代武装机制的保护：等待中或运动中的目标遇到停用、机器人故障、夹爪不可用、`~/gripper/activate` 即 ABORTED，
      其值不再保留；硬件未激活、夹爪未激活或报故障时拒绝新目标
    - 到当前开度的目标也照发（再次夹紧是合理用法；E5 的短暂 0 不外泄由第 3 步保证）
-   - 真机管线不再加载 `gripper_controller`（launch 只在 mock 下加载）；launch 把插件的 action 重映射为
-     `/<ns>gripper_controller/gripper_cmd`——mock（仍用上游控制器）与真机对上层同名同类型
+   - 真机管线不再加载 `gripper_controller`（launch 只在 mock 下加载）；插件节点在 `<ns>` 下，以相对名
+     `gripper_controller/gripper_cmd` 创建 action（维护者选定，不做重映射），解析为 `/<ns>/gripper_controller/gripper_cmd`
+     ——mock（仍用上游控制器）与真机对上层同名同类型
    - 武装机制删除（`~/status` 的 `gripper_commands` 随之删除）：action 命令只来自被接受的目标；
      `~/status` 增加 `gripper_object`（`none` / `held` / `dropped`，按 2/3）
 2. **过期的夹爪命令**：随第 1 步消失——命令只来自被接受的目标，目标被取代或取消后驱动不再持有其值，上游控制器
    "中止后命令仍留在接口里"的行为不再有机会发生
 3. **原地运动的开度**：发出的目标非 0 时，帧的 0 % 只在出现过非 0 位置之后才采信；否则保持运动前的开度
 4. **轨迹暂停代替扣臂**（JTC 速度缩放）
-   - 插件导出状态接口 `<tf_prefix>speed_scaling/speed_scaling_factor`（与 UR 驱动同名）：平时 1.0，夹爪忙时（运动：从发出
+   - 状态接口 `<tf_prefix>speed_scaling/speed_scaling_factor`（与 UR 驱动同名）在 xacro 里用
+     `<gpio name="${tf_prefix}speed_scaling">` 声明一次、`initial_value` 1.0，真机与 mock 共用（同 `fr_status`、UR；
+     维护者选定）；真机插件写值：平时 1.0，夹爪忙时（运动：从发出
      `MoveGripper` 到帧报完成；激活：激活服务执行期间）0.0。`joint_trajectory_controller` 配 `speed_scaling.state_interface` 指向它（本机 Jazzy 的
      JTC 4.42.1 已支持，`joint_trajectory_controller_parameters.hpp:91`），因子为 0 时轨迹时间不前进：参考停在原地，
-     不偏离、不触发路径容差，夹爪完成后从原处继续。mock 分支声明同名接口，恒为 1.0
+     不偏离、不触发路径容差，夹爪完成后从原处继续。mock 恒为 1.0
    - 夹爪只在机械臂静止时发出（现有：伺服流停发且队列空），所以因子降为 0 时机械臂本来就停着，不会急停
    - 删除 2 s 扣臂超时、`ProtectiveStop::HoldTimeout` 与"回到停住位置才放行"（`arm_held_`）。夹爪忙时仍不把会动的
      命令发给控制器（控制器也不会执行，G9）；夹爪结束由帧确定，同一周期因子回到 1、命令即放行，只经现有的单周期
@@ -118,7 +122,8 @@ MoveIt 的执行时长监控会把暂停的时间算作超时：MoveIt 计划须
 此后抽走不再报 3"无记录数据，若属实，长时间夹持后的掉落检测不到，`gripper_object` 停在 `held`；夹爪 action 的目标回调与结果发布共用插件节点的 executor 线程，
 不阻塞实时循环（参考 JTC：实时侧只用无锁缓冲）；mock 仍用上游夹爪控制器，其卡住按开度速度判定、语义与真机不同
 （README 写明）；`gripper_controller` 的 `max_velocity`/`max_effort` 命令接口保留（mock 需要），真机上无人占用；
-JTC 速度缩放在 Jazzy 是较新的功能，行为以 4.42.1 源码为准（Context），升级 JTC 时须重读。
+暂停中开始、只给位置且起步即高速的轨迹（线性插值，速度超过关节限速的一半），恢复时第一步是两个周期的位移，超过单周期
+步长上限即保护停止；MoveIt 的轨迹从静止起步，不受影响。JTC 速度缩放在 Jazzy 是较新的功能，行为以 4.42.1 源码为准（Context），升级 JTC 时须重读。
 
 ## 测试
 
@@ -286,7 +291,7 @@ JTC 速度缩放在 Jazzy 是较新的功能，行为以 4.42.1 源码为准（C
   2. `GetGripperConfig` 读回 company 1（SDK 文档：1-Robotiq；大寰为 4）、device 3（文档未定义），但大寰 PGI-140
      工作正常、无故障：读回的厂商号与夹爪能否工作无关。
   3. `gripper_temp`、`gripper_voltage` 在 PGI-140 上始终为 0。
-  4. 记入 `sdk_quirks.md` G17。
+  4. 记入 `sdk_quirks.md` G16。
 
 ---
 

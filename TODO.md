@@ -57,9 +57,6 @@
       —— done when: 该计划 done、维护者合入
 - [ ] 真机复测发现的夹爪完成判定、过期夹爪命令、扣臂与跟随滞后：[docs/plans/20261014-gripper-arm-retest-fixes.md](docs/plans/20261014-gripper-arm-retest-fixes.md) —— done when: 该计划 done
 - [ ] 夹爪不经运动队列控制（末端 485 `AxleSensorRegWrite` 或 Modbus 直连主机），让机械臂与夹爪真正同时动 —— done when: 真机验证可行性，再决定是否立计划
-- [ ] 合入后：夹爪改 action（真机由插件提供 `ParallelGripperCommand`，按 motiondone 判完成）——须先解决 mock/真机行为分叉、
-      执行回调占用 executor 线程、1.5 s 启发式依据、MoveIt cancel 与执行时长监控；分析见
-      [docs/plans/20261013-kiss-refactor.md](docs/plans/20261013-kiss-refactor.md) —— done when: 单独计划 done
 - [ ] 合入后：FK 检查改用 KDL（读 `HardwareInfo::original_xml`，删 `kinematics.hpp` 与 xacro 拼出的参数）；现实现假定关节都绕
       z 轴转，`fairino3_mt_v6` 的倾斜轴会算错 —— done when: 单独计划 done，真机偏差与现实现一致
 - [ ] 合入后：XML-RPC 改用 xmlrpc-c 编解码 + libcurl（删 `xmlrpc_codec`、`HttpConnection`）；须处理 `Content-Type: text/xml`、
@@ -93,5 +90,8 @@
   时补偿跟不上，队列持续增长。稳定后 ±3000 ppm 内保持 3 ± 1。目前只实测过一台控制器（慢约 1000 ppm，S17），
   每台控制器、每台主机的方向与大小都须实测（`fr_servo_bench` 看 trim）—— impact: 排空时起步段顿一下；
   增长时延迟变大，直至 255 条满
+- **JTC 取消或中止轨迹时保持在实际位置**（上游 `set_hold_position()` 取 `state_current_`）：跟随滞后 116–133 ms（S19），
+  命令一步跳回约"速度 × 滞后"，超过单周期步长上限（URDF 限速 × `cmdT`）即保护停止；约 12°/s 以上取消运动中的轨迹就会
+  触发 —— impact: MoveIt 停止、action 取消、路径容差中止都以保护停止收场；减少滞后或整条轨迹交给控制器执行时一并处理
 - **故障恢复全由操作者发起**，驱动绝不自动复位（[docs/fault_handling.md](docs/fault_handling.md)）
   —— impact: 无人值守时故障即停机
