@@ -41,7 +41,6 @@ launch 参数：`ip`、`cmd_t_ms`（ServoJ 的 cmdT，整毫秒，默认 8）、
 |---|---|---|
 | 固件故障 / 碰撞 / 安全停止 / 掉使能 | 立即停发，硬件 → `inactive`，`fr_status/fault_class = 1`，故障码原样报在 `~/status` | 排除原因 → `reset_error` → 激活硬件 → 激活控制器 |
 | 命令超过单周期步长（URDF 速度限位 × cmdT） | 拒绝该命令（固件从未见到），同上，`main_code` 仍为 0 | 同上（`reset_error` 无事可做，可省） |
-| 夹爪完成后被扣住的机械臂命令 2 s 内未回到停住位置（见"夹爪"） | 保护停止，同上，`main_code` 仍为 0 | 重新激活硬件 → 激活控制器 |
 | 急停（本硬件：控制箱断电，见下） | 先是通信中断；控制器自行上线后状态帧报 `main_code=1 sub_code=149`，即 `fault_class = 1`。`reset_error` 拒绝（硬件已 `unconfigured`） | 控制箱断电重启（sdk_quirks F4），之后重新 configure → activate |
 | 状态帧真的报 `EmergencyStop=1` | 同固件故障，`fault_class = 2`；`reset_error` **拒绝** | 只能硬件重启控制器，之后重新 configure |
 | 通信中断（状态帧超时/连接断开/ServoJ 连接失败） | 硬件 → `unconfigured`，`fault_class = 3`；`reset_error` 拒绝；之后只读重连状态流（见下） | 确认控制器在线后重新 configure → activate |
@@ -129,21 +128,17 @@ ros2 action send_goal /gripper_controller/gripper_cmd control_msgs/action/Parall
 - **夹爪命令等机械臂静止**：伺服流已停发且控制器队列为空时才发 `MoveGripper`；机械臂在动或同一周期要动时，
   夹爪命令等着（只保留最新值）。等太久时 action 会因 `stall_timeout` ABORTED，但命令仍是控制器的当前目标，
   机械臂停下后照样执行
-- **夹爪忙时扣住机械臂**：从发出 `MoveGripper`（或激活）到状态帧报完成（`motion_done` 先 0 后 1；1.5 s 内未见运动
-  开始按无需运动，最长 30 s），会让机械臂动的命令不执行，机械臂停在原处，**硬件不停用**
-  （`~/status` 的 `arm_commands = refused (gripper busy)`）。`MoveGripper` 调用失败（返回错误或超时）也一样只看状态帧：
-  超时的调用可能在伺服流停下后照样执行（G8）。
-  夹爪完成后，命令回到停住位置 0.01° 以内才恢复（从静止起步的新轨迹、或中止后保持实际位置的轨迹控制器都满足），
-  不会跳到被拒轨迹已走到的地方（按单周期步长限值放行的话，可以在一个周期里以最高速度跳过去）。
-  `joint_trajectory_controller` 设了路径容差（每关节 0.26 rad）和目标容差（0.005 rad、`goal_time` 0.5 s）：
-  被扣住的轨迹落后 0.26 rad 即 ABORTED，之后它保持在实际位置，命令回到停住位置。
-  夹爪完成后 2 s 内命令仍未回来（如很慢、落后不到 0.26 rad 的轨迹，或不经轨迹控制器的命令），驱动**保护停止**：
-  硬件 → `inactive`，`fault_class = 1`，`~/status` 的 message 写明原因，重新激活硬件即清除
+- **夹爪忙时轨迹暂停**：从发出 `MoveGripper`（或激活）到状态帧报完成（`motion_done` 先 0 后 1；1.5 s 内未见运动
+  开始按无需运动，最长 30 s），`speed_scaling_factor` 为 0，`joint_trajectory_controller` 的轨迹时间停住：
+  其间收到的轨迹停在起点等待，夹爪完成后从原处继续并照常 SUCCEEDED，不触发路径容差，**硬件不停用**
+  （`~/status` 的 `arm_commands = paused (gripper busy)`）。驱动也不把会让机械臂动的命令发给控制器（控制器在夹爪
+  运动期间不执行 `ServoJ`，G9）；夹爪完成的那个周期起命令照常发出，只经单周期步长检查。`MoveGripper` 调用失败
+  （返回错误或超时）也一样只看状态帧：超时的调用可能在伺服流停下后照样执行（G8）。
+  不认速度缩放的控制器（如 `forward_position_controller`）在夹爪运动期间照样往前走，夹爪完成后命令一步跳过去，
+  被步长检查拒绝、保护停止：夹爪运动期间不要用它们命令机械臂。
 
-**使用约定：机械臂与夹爪不要同时命令**。等一方的 action 结束再发另一方：夹爪 action 结束再发轨迹，轨迹 action
-结束再发夹爪（MoveIt 的顺序执行即如此）。同时命令时：夹爪运动中发来的轨迹被扣住、因路径容差 ABORTED；
-夹爪完成后命令 2 s 内没回到停住位置则保护停止。恢复：重新激活硬件
-（`ros2 control set_hardware_component_state <tf_prefix>fr_robot active`），再激活轨迹控制器。
+**使用约定**：机械臂与夹爪可以先后发出，不必等对方的 action 结束：夹爪运动中发来的轨迹会暂停到夹爪完成，
+机械臂运动中发来的夹爪命令等机械臂停下（见上）。MoveIt 的执行时长监控会把暂停的时间算进去，须相应放宽。
 
 **命令与开度**：
 

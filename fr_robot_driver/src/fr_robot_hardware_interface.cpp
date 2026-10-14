@@ -43,10 +43,6 @@ constexpr double kStillDegPerS = 0.5;  // the arm counts as standing still below
 // standing, the readback stays within 0.002 deg)
 constexpr double kAtRestDeg = 0.01;
 constexpr auto kGripperActivationTimeout = std::chrono::seconds(3);
-// After the gripper is done, the held arm's command must be back at the hold position within this
-// (the trajectory controller's path tolerance aborts a held trajectory well before), or the driver
-// stops: the arm must not stay held indefinitely with nobody noticing.
-constexpr auto kHoldTimeout = std::chrono::seconds(2);
 
 // A command value [unit] as a MoveGripper percent in [1, 100]; `fallback` if it gives none (<= 0).
 int gripperPercent(double value, double per_percent, int fallback)
@@ -492,8 +488,6 @@ CallbackReturn FrRobotHardwareInterface::on_activate(const rclcpp_lifecycle::Sta
     set_command(gripper_joint_ + "/" + hardware_interface::HW_IF_POSITION,
       gripperOpening(snap.state, source));
   }
-  arm_held_ = false;
-  held_after_gripper_since_ = {};
   last_cmd_deg_ = actual;
   write_count_ = 0;
   protective_stop_ = ProtectiveStop::None;
@@ -636,7 +630,6 @@ void FrRobotHardwareInterface::publishDiagnostics()
   in.comm = comm_reason_.load();
   in.protective_stop = protective_stop_.load();
   in.stream_paused = active_.load() && sender_->paused();
-  in.arm_held = arm_held_.load();
   if (hasGripper()) {
     in.gripper.present = true;
     in.gripper.index = gripper_index_;
@@ -779,43 +772,11 @@ return_type FrRobotHardwareInterface::write(const rclcpp::Time &, const rclcpp::
     target[i] = get_command<double>(joint_names_[i] + "/" + hardware_interface::HW_IF_POSITION) * kRadToDeg;
   }
   // While the gripper is busy the arm stays where it is (sdk_quirks G9): a command that would move
-  // it is refused, without deactivating. Afterwards it is taken up again only once it is back where
-  // the arm stands (kAtRestDeg), as a trajectory that starts from rest or a controller holding the
-  // actual position is. Anything wider lets the arm jump to where a refused trajectory got to: one
-  // step limit is the URDF's top speed for a whole cycle. If it is not back within kHoldTimeout of
-  // the gripper's end, the driver stops (a protective stop) rather than hold the arm indefinitely.
-  const bool gripper_busy = hasGripper() && gripper_busy_.load() != GripperBusy::Idle;
-  if (gripper_busy || arm_held_.load()) {
-    bool near = true;
-    for (int i = 0; i < 6; ++i) {
-      near = near && std::isfinite(target[i]) && std::abs(target[i] - last_cmd_deg_[i]) <= kAtRestDeg;
-    }
-    const bool moves = target != last_cmd_deg_;
-    if ((gripper_busy && moves) || (!gripper_busy && !near)) {
-      if (!arm_held_.exchange(true)) {
-        RCLCPP_WARN(get_logger(), "arm command refused: the gripper is %s; the arm stays where it is "
-          "until the command is back there", gripper_busy ? "busy" : "done but the command has moved "
-          "on");
-      }
-      const auto now = std::chrono::steady_clock::now();
-      if (gripper_busy) {
-        held_after_gripper_since_ = {};
-      } else if (held_after_gripper_since_ == std::chrono::steady_clock::time_point{}) {
-        held_after_gripper_since_ = now;
-      } else if (now - held_after_gripper_since_ > kHoldTimeout) {
-        RCLCPP_ERROR(get_logger(), "protective stop: %s", toString(ProtectiveStop::HoldTimeout));
-        protective_stop_ = ProtectiveStop::HoldTimeout;
-        fault_class_ = FaultClass::RobotFault;
-        sender_->halt();
-        return return_type::DEACTIVATE;
-      }
-      target = last_cmd_deg_;
-    } else {
-      held_after_gripper_since_ = {};
-      if (arm_held_.exchange(false)) {
-        RCLCPP_INFO(get_logger(), "arm commands accepted again");
-      }
-    }
+  // it is not sent. The trajectory controller pauses meanwhile (speed_scaling_factor 0, read()), so
+  // its command stays within a cycle or two of where the arm stands and is taken up as soon as the
+  // gripper is done. A controller that ignores the scaling runs ahead; the step check stops it.
+  if (hasGripper() && gripper_busy_.load() != GripperBusy::Idle) {
+    target = last_cmd_deg_;
   }
   // Step check (docs/fault_handling.md 6): the firmware only limits speed/acceleration/range itself
   // (sdk_quirks S14) and a violation puts the robot in a fault (S11).

@@ -42,11 +42,8 @@ controller_manager:
     speed_scaling:
       state_interface: __PREFIX__speed_scaling/speed_scaling_factor
     # A goal must be reached within 0.005 rad, at most 0.5 s after the trajectory's end, and the
-    # arm must follow within 0.26 rad on the way. A trajectory the hardware refuses (the arm is held
-    # while the gripper moves) is ABORTED as soon as it is 0.26 rad ahead, and the controller then
-    # holds the actual position, which releases the hold; the driver stops if that takes more than
-    # 2 s after the gripper's end. 0.26 rad = twice the fastest joint of any model (3.2 rad/s)
-    # times the normal following lag (prefill * cmdT + round trip, about 40 ms).
+    # arm must follow within 0.26 rad on the way. 0.26 rad = twice the fastest joint of any model
+    # (3.2 rad/s) times the normal following lag (prefill * cmdT + round trip, about 40 ms).
     constraints:
       stopped_velocity_tolerance: 0.01
       goal_time: 0.5

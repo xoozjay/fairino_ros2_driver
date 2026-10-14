@@ -169,12 +169,6 @@ private:
   double gripper_reported_ = -1.0;         // the opening last reported, for the velocity
   double gripper_velocity_ = 0.0;
   std::chrono::steady_clock::time_point gripper_changed_at_{};
-  // The arm is held where it stands: a command that moved it came while the gripper was busy, and
-  // the command has not come back to the hold position since.
-  std::atomic<bool> arm_held_{false};
-  // realtime thread only: since when the arm has been held with the gripper no longer busy; the
-  // epoch while it is not
-  std::chrono::steady_clock::time_point held_after_gripper_since_{};
 
   // ---- reset service (lives on the controller manager's executor) ----
   rclcpp::Node::SharedPtr node_;

@@ -961,7 +961,7 @@ TEST(Gripper, ACommandWaitsForTheArmToStand)
   EXPECT_EQ(r.fake.params("MoveGripper")[0][1], 0);
 }
 
-TEST(Gripper, AnArmMotionIsRefusedWhileTheGripperMovesWithoutDeactivating)
+TEST(Gripper, AnArmCommandWaitsWhileTheGripperMovesAndGoesOnRightAfter)
 {
   Rig r("", 125, kWithGripper);
   r.fake.edit([](auto & s) {s.gripper_active = 1; s.gripper_position = 100; s.gripper_motiondone = 1;});
@@ -975,36 +975,58 @@ TEST(Gripper, AnArmMotionIsRefusedWhileTheGripperMovesWithoutDeactivating)
   g.command(0.02);
   ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 1;}));
   const auto before = r.fake.servoJ().size();
-  for (int i = 1; i <= 20; ++i) {                    // a trajectory starts while the gripper moves
-    r.cycle([&] {(void)pan.set_value(i * 0.5 * kDeg);});
+  // A trajectory starts while the gripper moves. The paused trajectory controller holds its first
+  // step: 0.24 deg, one 8 ms cycle at 30 deg/s.
+  for (int i = 0; i < 20; ++i) {
+    r.cycle([&] {(void)pan.set_value(0.24 * kDeg);});
   }
-  EXPECT_EQ(r.fake.servoJ().size(), before);         // refused: nothing went out
+  EXPECT_EQ(r.fake.servoJ().size(), before);         // the arm stays: nothing went out
   ASSERT_TRUE(r.waitStatus([](const auto & s) {
-      return Rig::value(s, "arm_commands") == "refused (gripper busy)";}));
-  EXPECT_EQ(Rig::value(r.status(), "gripper_busy"), "1");
+      return Rig::value(s, "arm_commands") == "paused (gripper busy)";}));
+  EXPECT_EQ(r.state("speed_scaling/speed_scaling_factor"), 0.0);
+  EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_ACTIVE);
 
-  // the gripper is done, but the command is 10 deg away now: still held, no step fault
-  ASSERT_TRUE(cycleUntil(r, [&] {
-      return Rig::value(r.status(), "gripper_busy") == "0";}, 200));
-  r.run(20);
-  EXPECT_EQ(r.fake.servoJ().size(), before);
+  // the gripper is done: the trajectory goes on from where it waited, at once
+  ASSERT_TRUE(cycleUntil(r, [&] {return r.state("speed_scaling/speed_scaling_factor") == 1.0;}, 200));
+  for (int i = 2; i <= 21; ++i) {
+    r.cycle([&] {(void)pan.set_value(i * 0.24 * kDeg);});
+  }
+  ASSERT_TRUE(cycleUntil(r, [&] {return std::abs(r.fake.servoJ().back()[0] - 21 * 0.24) < 1e-6;}));
+  EXPECT_GT(r.fake.servoJ().size(), before + 15);
   EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_ACTIVE);
   EXPECT_EQ(r.state("fr_status/fault_class"), 0.0);
-
-  // within one step limit (1.44 deg) but not where the arm stands: still held, no jump
-  for (int i = 0; i < 20; ++i) {
-    r.cycle([&] {(void)pan.set_value(1.0 * kDeg);});
-  }
-  EXPECT_EQ(r.fake.servoJ().size(), before);
-  // back where the arm stands (what the trajectory controller holds after aborting): accepted
-  r.cycle([&] {(void)pan.set_value(0.0);});
-  for (int i = 1; i <= 20; ++i) {
-    r.cycle([&] {(void)pan.set_value(i * 0.5 * kDeg);});
-  }
-  EXPECT_GT(r.fake.servoJ().size(), before + 15);
   ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "arm_commands") == "accepted";}));
   EXPECT_EQ(r.fake.servoj_while_gripper_moves, 0);
   EXPECT_EQ(r.fake.move_gripper_while_streaming, 0);
+}
+
+TEST(Gripper, AControllerThatIgnoresThePauseEndsInTheStepCheck)
+{
+  Rig r("", 125, kWithGripper);
+  r.fake.edit([](auto & s) {s.gripper_active = 1; s.gripper_position = 100; s.gripper_motiondone = 1;});
+  r.fake.gripper_motion_ms = 300;
+  ASSERT_TRUE(r.configure());
+  ASSERT_TRUE(r.activate());
+  r.run(10);
+  GripperController g(r);
+  g.start();
+  auto pan = r.rm->claim_command_interface(kPan);
+  g.command(0.02);
+  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 1;}));
+  const auto before = r.fake.servoJ().size();
+  for (int i = 1; i <= 20; ++i) {                    // runs on while the gripper moves: 10 deg away
+    r.cycle([&] {(void)pan.set_value(i * 0.5 * kDeg);});
+  }
+  bool deactivated = false;
+  for (int i = 0; i < 200 && !deactivated; ++i) {
+    deactivated = r.cycle().result == return_type::DEACTIVATE;
+  }
+  ASSERT_TRUE(deactivated);                          // the jump is refused once the gripper is done
+  EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_INACTIVE);
+  EXPECT_EQ(r.fake.servoJ().size(), before);
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "fault_class") == "1";}));
+  EXPECT_NE(r.status().message.find("step check"), std::string::npos) << r.status().message;
+  EXPECT_EQ(r.fake.servoj_while_gripper_moves, 0);
 }
 
 TEST(Gripper, AFailedCallKeepsTheArmStillUntilTheFrameShowsTheGripperDone)
@@ -1033,51 +1055,12 @@ TEST(Gripper, AFailedCallKeepsTheArmStillUntilTheFrameShowsTheGripperDone)
   EXPECT_NEAR(r.state(kFinger), 0.02, 1e-9);
   EXPECT_EQ(r.fake.servoj_while_gripper_moves, 0);
 
-  r.cycle([&] {(void)pan.set_value(0.0);});          // back where the arm stands: accepted
+  r.cycle([&] {(void)pan.set_value(0.0);});          // within a step of where the arm stands: accepted
   for (int i = 1; i <= 20; ++i) {
     r.cycle([&] {(void)pan.set_value(i * 0.5 * kDeg);});
   }
   EXPECT_GT(r.fake.servoJ().size(), before + 15);
   EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_ACTIVE);
-}
-
-TEST(Gripper, AnArmCommandThatStaysAwayAfterTheGripperIsAProtectiveStop)
-{
-  Rig r("", 125, kWithGripper);
-  r.fake.edit([](auto & s) {s.gripper_active = 1; s.gripper_position = 100; s.gripper_motiondone = 1;});
-  r.fake.gripper_motion_ms = 300;
-  ASSERT_TRUE(r.configure());
-  ASSERT_TRUE(r.activate());
-  r.run(10);
-  GripperController g(r);
-  g.start();
-  auto pan = r.rm->claim_command_interface(kPan);
-  g.command(0.02);
-  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 1;}));
-  const auto before = r.fake.servoJ().size();
-  for (int i = 1; i <= 20; ++i) {                    // arm commanded while the gripper moves: held
-    r.cycle([&] {(void)pan.set_value(i * 0.5 * kDeg);});
-  }
-  ASSERT_TRUE(cycleUntil(r, [&] {return Rig::value(r.status(), "gripper_busy") == "0";}, 200));
-
-  // the command never comes back (e.g. a trajectory that did not abort)
-  const auto t0 = std::chrono::steady_clock::now();
-  bool deactivated = false;
-  for (int i = 0; i < 500 && !deactivated; ++i) {
-    deactivated = r.cycle().result == return_type::DEACTIVATE;
-  }
-  ASSERT_TRUE(deactivated);
-  EXPECT_GT(std::chrono::steady_clock::now() - t0, 1500ms);   // 2 s after the gripper's end
-  EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_INACTIVE);
-  EXPECT_EQ(r.fake.servoJ().size(), before);          // the held motion never went out
-  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "fault_class") == "1";}));
-  EXPECT_NE(r.status().message.find("gripper finished"), std::string::npos) << r.status().message;
-  EXPECT_EQ(Rig::value(r.status(), "main_code"), "0");   // the driver's own stop, not the robot's
-  EXPECT_EQ(r.fake.count("ResetAllError"), 0);
-
-  ASSERT_TRUE(r.activate());                          // reactivating clears it
-  r.run(3);
-  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "fault_class") == "0";}));
 }
 
 int main(int argc, char ** argv)

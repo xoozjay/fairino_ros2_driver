@@ -68,7 +68,6 @@ enum class ProtectiveStop
 {
   None,
   StepLimit,    // a command asked for more than one step limit (URDF velocity limit * cmdT)
-  HoldTimeout,  // after the gripper finished, the held arm's command did not come back in time
 };
 
 inline const char * toString(ProtectiveStop s)
@@ -76,8 +75,6 @@ inline const char * toString(ProtectiveStop s)
   switch (s) {
     case ProtectiveStop::None: return "none";
     case ProtectiveStop::StepLimit: return "a command was refused by the step check";
-    case ProtectiveStop::HoldTimeout: return "the arm command did not return to where the arm was "
-             "held within 2 s after the gripper finished (arm and gripper commanded at once)";
   }
   return "?";
 }
@@ -105,7 +102,7 @@ struct GripperStatusInput
   int index = 1;                  // the controller's gripper number; its active bit is index - 1
   GripperSource source = GripperSource::Frame;
   bool armed = false;             // gripper_controller's commands are passed on
-  bool busy = false;              // moving or activating: the arm is kept still
+  bool busy = false;              // moving or activating: the arm is kept still, trajectories pause
   uint64_t command_failures = 0;  // MoveGripper calls that failed
 };
 
@@ -118,7 +115,6 @@ struct StatusInput
   fr_client_library::RobotState384 frame{};
   long frame_age_ms = -1;                  // age of the newest frame ever received; -1: none
   bool stream_paused = false;              // active, and no ServoJ is sent because the arm stands
-  bool arm_held = false;                   // arm commands are refused while the gripper is busy
   GripperStatusInput gripper;
 };
 
@@ -213,7 +209,8 @@ public:
     add("link", in.link_up ? "up" : "down");
     add("servo_stream", in.hardware != HardwareState::Active ? "off" :
       in.stream_paused ? "paused" : "streaming");
-    add("arm_commands", in.arm_held ? "refused (gripper busy)" : "accepted");
+    add("arm_commands", in.hardware == HardwareState::Active && in.gripper.present && in.gripper.busy ?
+      "paused (gripper busy)" : "accepted");
     const auto & g = in.gripper;
     if (g.present) {
       add("gripper_active", frame(((f.gripper_active >> (g.index - 1)) & 1u) ? "1" : "0"));

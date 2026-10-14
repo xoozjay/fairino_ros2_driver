@@ -154,10 +154,21 @@ TEST(StatusReport, OurOwnProtectiveStopIsARobotFaultWithItsReason)
   EXPECT_EQ(value(t.status(), "fault_class"), "1");
   EXPECT_EQ(value(t.status(), "main_code"), "0");
   EXPECT_NE(t.status().message.find("step check"), std::string::npos);
-  in.protective_stop = ProtectiveStop::HoldTimeout;
+}
+
+TEST(StatusReport, ArmCommandsPauseOnlyWhileActiveAndTheGripperIsBusy)
+{
+  StatusTracker t;
+  auto in = healthy();
+  in.gripper.present = true;
   t.update(in, t0);
-  EXPECT_EQ(value(t.status(), "fault_class"), "1");
-  EXPECT_NE(t.status().message.find("gripper finished"), std::string::npos) << t.status().message;
+  EXPECT_EQ(value(t.status(), "arm_commands"), "accepted");
+  in.gripper.busy = true;
+  t.update(in, t0);
+  EXPECT_EQ(value(t.status(), "arm_commands"), "paused (gripper busy)");
+  in.hardware = HardwareState::Inactive;   // e.g. a protective stop while the gripper moved
+  t.update(in, t0);
+  EXPECT_EQ(value(t.status(), "arm_commands"), "accepted");
 }
 
 TEST(StatusReport, AServoStreamFailureIsACommunicationFaultEvenWithFrames)
