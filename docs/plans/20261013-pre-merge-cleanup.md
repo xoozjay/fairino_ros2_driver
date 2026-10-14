@@ -166,4 +166,19 @@ XML-RPC 改 xmlrpc-c 合入后各立计划（TODO.md）。问题分析与证据�
   （固件队列在第 1260 条见底）；重跑 check、单独跑 3 次与 rebase 中的那次都通过。2 ms 周期、靠 `sleep_until` 的测试
   对机器负载敏感。之后（另一提交）删除该测试：把 PI 环抽成无时钟的 `DepthLoop`，在模拟时间上用生产参数测试，
   毫秒级；它暴露了旧测试（带宽 4 rad/s）掩盖的起步排空界限，记入 TODO 已知风险
-- 未做：Done when 的真机各项；合入
+- **真机复测**（2026-10-14，3.8.4.2，FR5，PGI-140，J6 ±30°，维护者在场）：
+  - 静止停发与 J6 +2°/4 s、+10°/5 s 往返：终点误差 ≤ 0.0004°，运动中队列 2–3，停下后重新停发；夹爪 50 → 100 % 期间
+    机械臂偏差 ≤ 0.0006°
+  - 夹爪运动中发 J6 0 → +30°（30°/s）：被扣住、因路径容差 ABORTED、夹爪完成后放行，无保护停止
+  - 夹爪运动中发 J6 +2°/4 s：被扣住，参考偏差不到路径容差，夹爪完成后 2 s → 保护停止（`HoldTimeout`）；解除后正常
+  - 路径容差：≤ 90°/s 不误报；实测跟随滞后 118 ms（非假设的 40 ms），预计约 126°/s 以上误报，未跑更高速
+  - 原地 `MoveGripper`：`motion_done` 第一帧即为 0，1.5 s 兜底不触发
+  - 新问题（夹住物体时 `motion_done = 2` 致 30 s 锁定、被中止的夹爪目标之后仍执行等）见
+    [20261014-gripper-arm-retest-fixes.md](20261014-gripper-arm-retest-fixes.md)
+  - 拔网线：92 ms 内报 COMM（`no state frame in time`）→ `unconfigured`，`~/status` 报 `fault_class=3`、`link=down`；
+    插回后后台监视重连只读状态流，`~/status` 恢复 `link=up`；configure（FK 偏差 0.10 mm）→ activate → 控制器恢复，
+    J6 +2° 往返正常，进程未崩溃。控制器管理器在停用控制器时报 "Error while attempting mode switch when deactivating
+    controllers in read cycle"（ros2_control 内部，未影响恢复）
+  - 已激活时再次激活（硬件 active、无故障、机械臂静止、夹爪 50 %）：被拒（`gripper 1 is already active`），未发
+    `ActGripper`，`~/status` 无变化，开度保持 50 %
+- 未做：合入
