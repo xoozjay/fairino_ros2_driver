@@ -53,6 +53,17 @@
 
 ### 杂项
 
+- [ ] 合入前收敛 `agent/dev`：[docs/plans/20261013-pre-merge-cleanup.md](docs/plans/20261013-pre-merge-cleanup.md)
+      —— done when: 该计划 done、维护者合入
+- [ ] 合入后：夹爪改 action（真机由插件提供 `ParallelGripperCommand`，按 motiondone 判完成）——须先解决 mock/真机行为分叉、
+      执行回调占用 executor 线程、1.5 s 启发式依据、MoveIt cancel 与执行时长监控；分析见
+      [docs/plans/20261013-kiss-refactor.md](docs/plans/20261013-kiss-refactor.md) —— done when: 单独计划 done
+- [ ] 合入后：FK 检查改用 KDL（读 `HardwareInfo::original_xml`，删 `kinematics.hpp` 与 xacro 拼出的参数）；现实现假定关节都绕
+      z 轴转，`fairino3_mt_v6` 的倾斜轴会算错 —— done when: 单独计划 done，真机偏差与现实现一致
+- [ ] 合入后：XML-RPC 改用 xmlrpc-c 编解码 + libcurl（删 `xmlrpc_codec`、`HttpConnection`）；须处理 `Content-Type: text/xml`、
+      `Expect:`、`CURLOPT_NOSIGNAL`、复用连接断开时的自动重发 —— done when: 单独计划 done，仿真器与真机伺服复验
+- [ ] `DriftTest`（−5000 ppm）偶发失败一次：2 ms 周期、`sleep_until` 驱动，机器忙时固件队列见底 —— done when: 测试不依赖
+      墙钟（或放宽到负载下稳定），连续 20 次 check 无失败
 - [ ] 本仓库尚未配置远程；首次 push 需 `git lfs push --all` 同步 mesh 对象（96 个 LFS 文件）
 - [ ] `initial_positions.yaml`（单机默认位形）与工作台位形的关系可考虑写进
       [docs/extension_pattern.md](docs/extension_pattern.md)
