@@ -69,7 +69,7 @@ ApiStatus ServoSender::start(const JointArray & initial_deg)
   }
   comm_error_ = ApiError::None;
   halted_ = false;
-  integral_ = 0;
+  loop_ = DepthLoop(options_.cmd_t_ms / 1000.0, options_.prefill, options_.loop_bandwidth_rad_s);
   trim_ppm_ = 0;
   paused_ = false;
   have_last_sent_ = false;
@@ -161,43 +161,57 @@ void ServoSender::resetStream()
   window_.clear();
   frac_ = 0;
   primed_ = false;
-  filter_valid_ = false;
-  // The frames that follow the prefill still show the old depth: do not steer on them.
-  const double settle_s = 0.3 / options_.loop_bandwidth_rad_s;
-  settle_until_ = Clock::now() + std::chrono::duration_cast<Clock::duration>(
-    std::chrono::duration<double>(settle_s));
+  loop_.restart();
+  last_update_ = Clock::now();
 }
 
-// PI loop on the firmware queue depth. The queue integrates (1 / cmdT) entries per second per unit
-// of eps, so with bandwidth w: Kp = 2 zeta w cmdT, Ki = w^2 cmdT. The depth is low-passed (pole at
-// 10 w) and a dead band of +-1 entry around the target leaves the trim alone while it is fine.
+// The queue integrates (1 / cmdT) entries per second per unit of eps, so with bandwidth w:
+// Kp = 2 zeta w cmdT, Ki = w^2 cmdT. The depth is low-passed (pole at 10 w) and a dead band of
+// +-kDeadBand entries around the target leaves eps alone while it is fine.
+DepthLoop::DepthLoop(double cmd_t_s, int target_depth, double bandwidth_rad_s)
+: cmd_t_s_(cmd_t_s), target_(target_depth), w_(bandwidth_rad_s)
+{
+  restart();
+}
+
+void DepthLoop::restart()
+{
+  settle_left_s_ = 0.3 / w_;
+  filter_valid_ = false;
+}
+
+double DepthLoop::update(int depth, double dt_s)
+{
+  if (settle_left_s_ > 0) {
+    settle_left_s_ -= dt_s;
+    return eps_;
+  }
+  if (!filter_valid_) {
+    filtered_ = depth;
+    filter_valid_ = true;
+    return eps_;
+  }
+  filtered_ += (1.0 - std::exp(-10.0 * w_ * dt_s)) * (depth - filtered_);
+  const double error = filtered_ - target_;
+  const double outside = std::abs(error) > kDeadBand ? error - std::copysign(kDeadBand, error) : 0.0;
+  const double max_eps = kMaxTrimPpm * 1e-6;
+  integral_ = std::clamp(integral_ + w_ * w_ * cmd_t_s_ * outside * dt_s, -max_eps, max_eps);
+  eps_ = std::clamp(2.0 * kDamping * w_ * cmd_t_s_ * outside + integral_, -max_eps, max_eps);
+  return eps_;
+}
+
 void ServoSender::updateTrim(Clock::time_point now)
 {
-  if (!options_.queue_depth || now < settle_until_) {
+  if (!options_.queue_depth) {
     return;
   }
   const std::optional<int> depth = options_.queue_depth();
   if (!depth || *depth < 0 || *depth > 255) {
     return;  // unknown or stale: keep the current trim
   }
-  if (!filter_valid_) {
-    filtered_ = *depth;
-    filter_valid_ = true;
-    last_update_ = now;
-    return;
-  }
   const double dt = std::chrono::duration<double>(now - last_update_).count();
   last_update_ = now;
-  const double w = options_.loop_bandwidth_rad_s;
-  const double cmd_t = options_.cmd_t_ms / 1000.0;
-  filtered_ += (1.0 - std::exp(-10.0 * w * dt)) * (*depth - filtered_);
-
-  const double error = filtered_ - options_.prefill;
-  const double outside = std::abs(error) > kDeadBand ? error - std::copysign(kDeadBand, error) : 0.0;
-  const double max_eps = kMaxTrimPpm * 1e-6;
-  integral_ = std::clamp(integral_ + w * w * cmd_t * outside * dt, -max_eps, max_eps);
-  const double eps = std::clamp(2.0 * kDamping * w * cmd_t * outside + integral_, -max_eps, max_eps);
-  trim_ppm_ = eps * 1e6;
+  trim_ppm_ = loop_.update(*depth, dt) * 1e6;
 }
 
 // The controller plays the first segment as soon as it arrives, so while the prefill is being sent

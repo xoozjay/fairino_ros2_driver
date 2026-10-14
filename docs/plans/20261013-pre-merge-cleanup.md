@@ -164,5 +164,6 @@ XML-RPC 改 xmlrpc-c 合入后各立计划（TODO.md）。问题分析与证据�
   提交说明比草稿略有改动：N12 不提尚不存在的插件；N14 去掉测试顺序执行的说明
 - **偶发失败**：构造 N24 时一次 check 中 `Drift/DriftTest.QueueDepthSettlesAndThePathStaysSmooth/3`（−5000 ppm）失败
   （固件队列在第 1260 条见底）；重跑 check、单独跑 3 次与 rebase 中的那次都通过。2 ms 周期、靠 `sleep_until` 的测试
-  对机器负载敏感，记入 TODO
+  对机器负载敏感。之后（另一提交）删除该测试：把 PI 环抽成无时钟的 `DepthLoop`，在模拟时间上用生产参数测试，
+  毫秒级；它暴露了旧测试（带宽 4 rad/s）掩盖的起步排空界限，记入 TODO 已知风险
 - 未做：Done when 的真机各项；合入

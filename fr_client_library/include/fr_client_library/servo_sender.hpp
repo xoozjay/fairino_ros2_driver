@@ -12,8 +12,8 @@
 //    (S17). Sending one segment per command would make the queue grow (or drain) steadily, so the
 //    command stream is resampled: the sender runs on its own schedule with period
 //    cmdT * (1 + eps) and sends the point of the command polyline at the matching position (linear
-//    interpolation, advancing 1 + eps commands per send). eps is trimmed by a PI loop on the
-//    firmware queue depth (options.queue_depth), limited to +-kMaxTrimPpm (1%). The path keeps its
+//    interpolation, advancing 1 + eps commands per send). eps is trimmed by a PI loop (DepthLoop)
+//    on the firmware queue depth (options.queue_depth), limited to +-1%. The path keeps its
 //    shape and is only stretched by eps; no point is dropped or repeated, so there are no
 //    speed spikes. The loop needs no new command: it reads the depth the state frames carry.
 //  * Commands are assumed to be produced at the nominal rate 1 / cmdT of the host clock (the host
@@ -89,11 +89,35 @@ struct ServoStats
   uint64_t pauses = 0;      // idle pauses so far
 };
 
+// The drift compensation's PI loop on the firmware queue depth, without clock or thread: one depth
+// sample and the time since the previous one in, eps out (positive: send slower). After a prefill
+// the depth still shows the old queue, so the loop ignores it for 0.3 / bandwidth, then seeds its
+// filter with the next sample.
+class DepthLoop
+{
+public:
+  static constexpr double kMaxTrimPpm = 10000;
+
+  DepthLoop(double cmd_t_s, int target_depth, double bandwidth_rad_s);
+  void restart();                         // after a prefill; eps is kept
+  double update(int depth, double dt_s);  // returns eps
+  double eps() const {return eps_;}
+
+private:
+  double cmd_t_s_;
+  double target_;
+  double w_;
+  double settle_left_s_ = 0;
+  bool filter_valid_ = false;
+  double filtered_ = 0;  // low-passed queue depth
+  double integral_ = 0;  // in units of eps
+  double eps_ = 0;
+};
+
 class ServoSender
 {
 public:
   static constexpr std::size_t kQueueCapacity = 64;  // host side; 512 ms at 8 ms
-  static constexpr double kMaxTrimPpm = 10000;
   static constexpr std::size_t kLead = 3;  // commands queued before the first send
 
   ServoSender(std::string ip, uint16_t port = 20003, ServoSenderOptions options = {});
@@ -176,10 +200,7 @@ private:
   bool primed_ = false;
   JointArray last_sent_{};
   bool have_last_sent_ = false;
-  double integral_ = 0;       // trim, in units of eps
-  double filtered_ = 0;       // low-passed queue depth
-  bool filter_valid_ = false;
-  Clock::time_point settle_until_{};
+  DepthLoop loop_{0.008, 3, 0.1};  // replaced by start() with the options
   Clock::time_point last_update_{};
 };
 

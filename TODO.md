@@ -62,8 +62,6 @@
       z 轴转，`fairino3_mt_v6` 的倾斜轴会算错 —— done when: 单独计划 done，真机偏差与现实现一致
 - [ ] 合入后：XML-RPC 改用 xmlrpc-c 编解码 + libcurl（删 `xmlrpc_codec`、`HttpConnection`）；须处理 `Content-Type: text/xml`、
       `Expect:`、`CURLOPT_NOSIGNAL`、复用连接断开时的自动重发 —— done when: 单独计划 done，仿真器与真机伺服复验
-- [ ] `DriftTest`（−5000 ppm）偶发失败一次：2 ms 周期、`sleep_until` 驱动，机器忙时固件队列见底 —— done when: 测试不依赖
-      墙钟（或放宽到负载下稳定），连续 20 次 check 无失败
 - [ ] 本仓库尚未配置远程；首次 push 需 `git lfs push --all` 同步 mesh 对象（96 个 LFS 文件）
 - [ ] `initial_positions.yaml`（单机默认位形）与工作台位形的关系可考虑写进
       [docs/extension_pattern.md](docs/extension_pattern.md)
@@ -88,5 +86,10 @@
   排障期间只能停驱动 —— impact: 真机排障窗口
 - **`ServoJ` 不受全局速度/加速度限制**（[docs/sdk_quirks.md](docs/sdk_quirks.md) S14）：
   保护只在 ROS 侧（URDF 限位、`enforce_command_limits`、单周期步长检查）—— impact: 配置错误会直接撞机
+- **伺服时钟偏差补偿的两侧界限**（`DepthLoop` 闭环仿真，生产参数 8 ms、带宽 0.1 rad/s、目标深度 3）：
+  控制器比主机快 ≥ 4000 ppm 时，冷启动（eps = 0）阶段补偿追上之前固件队列排空；控制器比主机慢超过 1 %（限幅）
+  时补偿跟不上，队列持续增长。稳定后 ±3000 ppm 内保持 3 ± 1。目前只实测过一台控制器（慢约 1000 ppm，S17），
+  每台控制器、每台主机的方向与大小都须实测（`fr_servo_bench` 看 trim）—— impact: 排空时起步段顿一下；
+  增长时延迟变大，直至 255 条满
 - **故障恢复全由操作者发起**，驱动绝不自动复位（[docs/fault_handling.md](docs/fault_handling.md)）
   —— impact: 无人值守时故障即停机

@@ -345,59 +345,98 @@ TEST(ServoSender, CallTimingIsMeasured)
 
 // ---- drift compensation ----------------------------------------------------------------------
 
-// The producer runs on the host clock at exactly cmdT (a ramp of 1 per command); the fake
-// controller plays segments `drift_ppm` slower. The queue depth must settle near the prefill and
-// never run empty, and the sent path must stay a smooth stretch of the ramp.
-class DriftTest : public ::testing::TestWithParam<double> {};
-
-TEST_P(DriftTest, QueueDepthSettlesAndThePathStaysSmooth)
+// The loop alone, on simulated time. Production settings: cmdT 8 ms, target depth 3, 0.1 rad/s.
+namespace
 {
-  const double drift_ppm = GetParam();
-  constexpr int kCmdT = 2;       // ms: 500 Hz makes the queue react 4x faster than at 8 ms
-  constexpr int kCommands = 2500;
-  Controller c;
-  c.playSegments(kCmdT, drift_ppm);
-  ServoSenderOptions o = opts(kCmdT, 3);
-  o.queue_depth = [&c]() -> std::optional<int> {return c.depth();};
-  o.loop_bandwidth_rad_s = 4.0;  // a fast loop, so that the test does not take minutes
-  ServoSender s("127.0.0.1", c.port(), o);
-  ASSERT_TRUE(s.start(joint1(0)).ok());
+constexpr double kCmdTs = 0.008;
+constexpr int kTarget = 3;
+constexpr double kBandwidth = 0.1;
+constexpr double kSettleS = 0.3 / kBandwidth;  // the depth after a prefill is ignored this long
 
-  std::vector<int> depth;
-  const auto t0 = std::chrono::steady_clock::now();
-  for (int i = 0; i < kCommands; ++i) {
-    std::this_thread::sleep_until(t0 + std::chrono::milliseconds(kCmdT) * i);
-    ASSERT_TRUE(s.enqueue(joint1(i)));
-    depth.push_back(c.depth());
+// Feeds `depth` every cmdT for `seconds`; returns the last eps.
+double feed(DepthLoop & loop, int depth, double seconds)
+{
+  double eps = loop.eps();
+  for (double t = 0; t < seconds; t += kCmdTs) {
+    eps = loop.update(depth, kCmdTs);
   }
-  const double trim = s.stats().trim_ppm;
-  s.stop();
+  return eps;
+}
+}  // namespace
 
-  const auto first = depth.begin() + 100;   // the start-up frames
-  EXPECT_GE(*std::min_element(first, depth.end()), 1) << "the firmware queue ran empty at " << (std::min_element(first, depth.end()) - depth.begin());
-  const auto settled = depth.begin() + 1000;  // after 2 s
-  EXPECT_LE(*std::max_element(settled, depth.end()), 3 + 3);
-  const double mean_a = std::accumulate(settled, settled + 750, 0.0) / 750;
-  const double mean_b = std::accumulate(depth.end() - 750, depth.end(), 0.0) / 750;
-  EXPECT_NEAR(mean_a, mean_b, 1.0) << "the depth still has a trend";
-  EXPECT_GT(trim * drift_ppm, 0) << "the trim must follow the sign of the drift";
-  EXPECT_LE(std::abs(trim), ServoSender::kMaxTrimPpm);
-
-  // The sent path: standing segments at 0, then the ramp sampled at 1 +- eps per send.
-  const auto sent = c.servoJFirstJoints();
-  ASSERT_GT(sent.size(), 1000u);
-  EXPECT_EQ(sent[0], 0.0);
-  const std::size_t moving = std::find_if(sent.begin(), sent.end(), [](double v) {return v > 0;}) -
-    sent.begin();
-  ASSERT_LT(moving, 12u);                    // a handful of standing segments, then the ramp
-  for (std::size_t i = moving + 1; i < sent.size(); ++i) {
-    const double step = sent[i] - sent[i - 1];
-    EXPECT_GE(step, 1.0 - ServoSender::kMaxTrimPpm * 1e-6 - 1e-5) << "at " << i;
-    EXPECT_LE(step, 1.0 + ServoSender::kMaxTrimPpm * 1e-6 + 1e-5) << "at " << i;
-  }
+TEST(DepthLoop, IgnoresTheDepthRightAfterAPrefill)
+{
+  DepthLoop loop(kCmdTs, kTarget, kBandwidth);
+  EXPECT_EQ(feed(loop, 255, kSettleS - 2 * kCmdTs), 0.0);
 }
 
-INSTANTIATE_TEST_SUITE_P(Drift, DriftTest, ::testing::Values(1000.0, -1000.0, 5000.0, -5000.0));
+TEST(DepthLoop, LeavesEpsAloneAtTheTargetDepth)
+{
+  DepthLoop loop(kCmdTs, kTarget, kBandwidth);
+  EXPECT_EQ(feed(loop, kTarget, kSettleS + 60), 0.0);
+}
+
+TEST(DepthLoop, SendsSlowerWhenTheQueueIsDeepAndFasterWhenItIsShallow)
+{
+  DepthLoop deep(kCmdTs, kTarget, kBandwidth);
+  EXPECT_GT(feed(deep, kTarget + 2, kSettleS + 1), 0.0);
+  DepthLoop shallow(kCmdTs, kTarget, kBandwidth);
+  EXPECT_LT(feed(shallow, kTarget - 2, kSettleS + 1), 0.0);
+}
+
+TEST(DepthLoop, EpsIsLimitedToOnePercent)
+{
+  DepthLoop loop(kCmdTs, kTarget, kBandwidth);
+  EXPECT_EQ(feed(loop, 255, kSettleS + 60), DepthLoop::kMaxTrimPpm * 1e-6);
+  DepthLoop empty(kCmdTs, kTarget, kBandwidth);
+  EXPECT_EQ(feed(empty, 0, kSettleS + 600), -DepthLoop::kMaxTrimPpm * 1e-6);
+}
+
+TEST(DepthLoop, ARestartKeepsEps)
+{
+  DepthLoop loop(kCmdTs, kTarget, kBandwidth);
+  const double eps = feed(loop, kTarget + 2, kSettleS + 5);
+  ASSERT_GT(eps, 0.0);
+  loop.restart();
+  EXPECT_EQ(feed(loop, 0, kSettleS - 2 * kCmdTs), eps);
+}
+
+// The loop closed over a model of the firmware queue whose clock is `drift_ppm` slower than the
+// host's (S17: about +1000 ppm on the real controller). Every send adds a segment; in the time to
+// the next send, cmdT * (1 + eps), the controller plays cmdT * (1 + eps) / (cmdT * (1 + drift))
+// segments. The queue starts at the target, as after a prefill. Drifts: the measured one and three
+// times it, both signs. Limit: starting from eps = 0, a controller 4000 ppm or more faster than the
+// host empties the queue before the loop has caught up (TODO.md).
+class DriftCompensation : public ::testing::TestWithParam<double> {};
+
+TEST_P(DriftCompensation, KeepsTheQueueAtTheTargetDepth)
+{
+  const double drift = GetParam() * 1e-6;
+  DepthLoop loop(kCmdTs, kTarget, kBandwidth);
+  double level = kTarget;
+  int min_depth = kTarget;
+  int min_settled = kTarget;
+  int max_settled = kTarget;
+  double eps = 0;
+  for (double t = 0; t < 600; ) {
+    const int depth = static_cast<int>(std::ceil(level));
+    min_depth = std::min(min_depth, depth);
+    if (t > 120) {  // a few time constants of the loop (1 / bandwidth = 10 s)
+      min_settled = std::min(min_settled, depth);
+      max_settled = std::max(max_settled, depth);
+    }
+    const double dt = kCmdTs * (1.0 + eps);
+    eps = loop.update(depth, dt);
+    level = std::max(0.0, level + 1.0 - dt / (kCmdTs * (1.0 + drift)));
+    t += dt;
+  }
+  EXPECT_GE(min_depth, 1) << "the firmware queue ran empty";
+  EXPECT_GE(min_settled, kTarget - 1);
+  EXPECT_LE(max_settled, kTarget + 1);
+  EXPECT_NEAR(eps, drift, 1e-4) << "eps follows the drift";
+}
+
+INSTANTIATE_TEST_SUITE_P(Drift, DriftCompensation, ::testing::Values(1000.0, -1000.0, 3000.0, -3000.0));
 
 // A straight ramp cannot tell interpolation from extrapolation, a zigzag can: every sent point
 // must lie between the commands it interpolates, so inside [0, 1].
