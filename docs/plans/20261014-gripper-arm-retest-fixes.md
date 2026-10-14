@@ -1,6 +1,7 @@
 # 让夹爪不再干扰机械臂：轨迹暂停代替扣臂停机，修正夹爪完成判定与过期命令
 
-- Status: approved
+- Status: approved（经审查修订后再批：夹爪结束即放行、挂起目标的作废与拒绝、激活期间暂停、被取代的目标 ABORTED、
+  JTC 因子 0 的行为由源码确认）
 
 ## Goal
 
@@ -13,12 +14,8 @@ J6 ±30°）发现：夹住物体后机械臂与夹爪被锁 30 s；被中止的
 
 ## Done when
 
-- `scripts/check.sh` 通过，新增测试覆盖：夹爪运动期间收到的轨迹暂停、夹爪完成后继续并 SUCCEEDED（无保护停止）；
-  action 目标：报 1/2 的结果与 `stalled` 语义、等机械臂期间不超时、新目标取代旧目标、取消；`motion_done = 2` 结束
-  夹爪运动；原地 `MoveGripper` 期间开度不报 0
+- 下文"测试"一节：A、B 组进入 `scripts/check.sh` 并通过；C 组手动通过；D 组真机通过
 - 驱动代码中不再有因夹爪而起的保护停止（`ProtectiveStop::HoldTimeout` 删除）
-- 真机（操作者发起）：夹爪运动中发 J6 +2°/4 s 与 0 → +30° 轨迹，均暂停、随后完成且 SUCCEEDED；夹住物体后 `gripper_busy` 在帧报完成时清零，随即能张开；夹爪目标被中止后夹爪不再动；
-  J6 在维护者允许的最高速度（180°/s）下正常轨迹不因路径容差中止
 - sdk_quirks 增加本次实测（下文 E1–E5），README 夹爪段与故障表同步
 
 ## Context
@@ -57,6 +54,12 @@ feedback 互相关：30°/s 最大误差 3.7°、60°/s 7.4°、90°/s 11.1°，
 **其他**：保护停止后 `~/status` 的 `arm_commands` 仍报 `refused (gripper busy)`（`status_report.hpp:216` 的 `arm_held`
 未随停用清除）。
 
+**JTC 的速度缩放**（上游 4.42.1 `joint_trajectory_controller.cpp` 的 `update()`，读源码）：每周期从状态接口读因子；
+新轨迹首次采样时 `traj_time_ = time`，之后 `traj_time_ += period * scaling_factor_`，因子为 0 时参考停在轨迹起点；
+发给硬件的命令取 `sample(traj_time_ + update_period_)`，冻结时比参考超前一个周期（线性插值、30°/s、500 Hz 时 0.06°）；
+路径容差比较 `traj_time_` 处的参考与反馈，`goal_time` 的 `time_difference` 也按 `traj_time_` 算，暂停不计入；
+取消与中止时 `set_hold_position()` 保持在实际位置（`state_current_.positions`）。
+
 ## Approach
 
 1. **完成判定与夹爪 action**（此前"合入后"的计划提前；维护者选 A）：夹爪 action 改由驱动插件的节点提供，类型仍为
@@ -67,8 +70,11 @@ feedback 互相关：30°/s 最大误差 3.7°、60°/s 7.4°、90°/s 11.1°，
    - 完成判定直接用帧："先报 0、再报非 0"结束——报 1 到位，action SUCCEEDED；报 2 夹住，SUCCEEDED 且
      `stalled = true`（维护者确认）；报 3 掉落，ABORTED；等机械臂停下的目标继续等，不算卡住（机械臂优先）；
      发出 30 s 仍无完成的按超时 ABORTED。1.5 s"从未开始"兜底保留（E5：起始的 0 一定出现，兜底只是防线）
-   - 新目标取代旧目标（与上游一致）；取消时若尚未发出则干净取消，已发出则报取消、运动让其走完（控制器无法中止
-     已发出的夹爪运动）
+   - 新目标被接受时旧目标立即 ABORTED（与 JTC 的抢占一致；上游夹爪控制器为 CANCELED，但服务端抢占不经客户端取消
+     请求）；旧目标已发出的运动走完后再发新目标。取消时若尚未发出则干净取消，已发出则报取消、运动让其走完
+     （控制器无法中止已发出的夹爪运动）
+   - 取代武装机制的保护：等待中或运动中的目标遇到停用、机器人故障、夹爪不可用、`~/gripper/activate` 即 ABORTED，
+     其值不再保留；硬件未激活、夹爪未激活或报故障时拒绝新目标
    - 到当前开度的目标也照发（再次夹紧是合理用法；E5 的短暂 0 不外泄由第 3 步保证）
    - 真机管线不再加载 `gripper_controller`（launch 只在 mock 下加载）；launch 把插件的 action 重映射为
      `/<ns>gripper_controller/gripper_cmd`——mock（仍用上游控制器）与真机对上层同名同类型
@@ -78,24 +84,28 @@ feedback 互相关：30°/s 最大误差 3.7°、60°/s 7.4°、90°/s 11.1°，
    "中止后命令仍留在接口里"的行为不再有机会发生
 3. **原地运动的开度**：发出的目标非 0 时，帧的 0 % 只在出现过非 0 位置之后才采信；否则保持运动前的开度
 4. **轨迹暂停代替扣臂**（JTC 速度缩放）
-   - 插件导出状态接口 `<tf_prefix>speed_scaling/speed_scaling_factor`（与 UR 驱动同名）：平时 1.0，夹爪运动期间（从发出
-     `MoveGripper` 到帧报完成）0.0。`joint_trajectory_controller` 配 `speed_scaling.state_interface` 指向它（本机 Jazzy 的
+   - 插件导出状态接口 `<tf_prefix>speed_scaling/speed_scaling_factor`（与 UR 驱动同名）：平时 1.0，夹爪忙时（运动：从发出
+     `MoveGripper` 到帧报完成；激活：激活服务执行期间）0.0。`joint_trajectory_controller` 配 `speed_scaling.state_interface` 指向它（本机 Jazzy 的
      JTC 4.42.1 已支持，`joint_trajectory_controller_parameters.hpp:91`），因子为 0 时轨迹时间不前进：参考停在原地，
      不偏离、不触发路径容差，夹爪完成后从原处继续。mock 分支声明同名接口，恒为 1.0
    - 夹爪只在机械臂静止时发出（现有：伺服流停发且队列空），所以因子降为 0 时机械臂本来就停着，不会急停
-   - 删除 2 s 扣臂超时与 `ProtectiveStop::HoldTimeout`。夹爪运动期间仍不把会动的命令发给控制器（控制器也不会执行，
-     G9）；夹爪结束后命令须回到停住位置（0.01°）才放行——不认速度缩放的控制器属于误用，README 写明，极端跳变由
-     现有的单周期步长检查兜底。`~/status` 的 `arm_commands` 保持键名不变，值增加 `paused (gripper moving)`
-   - 先用测试确认 JTC 在因子 0 时的行为（参考冻结、`goal_time` 按缩放后的时间算、恢复后 SUCCEEDED），再改驱动
-   - 路径容差按实测滞后重算：最快关节 3.2 rad/s × 0.118 s × 2 ≈ 0.76 rad；它只负责真正的跟随失败
+   - 删除 2 s 扣臂超时、`ProtectiveStop::HoldTimeout` 与"回到停住位置才放行"（`arm_held_`）。夹爪忙时仍不把会动的
+     命令发给控制器（控制器也不会执行，G9）；夹爪结束由帧确定，同一周期因子回到 1、命令即放行，只经现有的单周期
+     步长检查——JTC 冻结时命令只超前停住位置一个周期，远小于步长上限。不认速度缩放的控制器属于误用，README 写明，
+     由步长检查兜底。`~/status` 的 `arm_commands` 保持键名不变，值增加 `paused (gripper busy)`
+   - JTC 在因子 0 时的行为以源码为准（见 Context），不另写测试确认
+   - 路径容差按实测滞后的最大值重算：最快关节 3.2 rad/s × 0.133 s × 2 ≈ 0.85 rad（滞后 116–133 ms，E1 与 X3）；它只负责
+     真正的跟随失败
    - 118 ms 的组成（已知 `kLead` 24 ms、`prefill` 24 ms，其余约 70 ms）用 `fr_servo_bench` 测清，减少滞后另立计划
-   - 机械臂运动期间收到的夹爪目标照旧等机械臂停下（G8）；等待超过 `stall_timeout` 的处理见第 2 步
-5. **状态**：停用时清除夹爪运动中的暂停状态
+   - 机械臂运动期间收到的夹爪目标照旧等机械臂停下（G8），不设等待时限；调用方可取消
+5. **状态**：停用时清除暂停状态（因子回到 1）
 6. **文档**：sdk_quirks 增加 E1（S19）、E3（G13）、E4 的驱动侧对策、E5（G14）；README 夹爪段写明夹住物体时的行为与
    SUCCEEDED/`stalled`；故障表与路径容差注释更新
 
 **考虑过、未采纳**：
 - 保持"扣住 + 2 s 保护停止"，或夹爪忙时收到会动的命令立即保护停止：违反"外设不干扰本体"
+- 夹爪结束后要求命令回到停住位置（0.01°）再放行：JTC 冻结时命令超前一个周期，恢复后接着前进、回不到门槛内，
+  轨迹最终被路径容差中止
 - 路径容差放大或设为 0 来减少误报：被扣住的轨迹仍只剩保护停止，且失去对真正跟随失败的检测
 - 不经运动队列控制夹爪、让二者真正同时动（末端 485 寄存器写 `AxleSensorRegWrite`，或夹爪 Modbus 直连主机）：
   未验证，可能与控制器对夹爪的轮询冲突，单列 TODO
@@ -103,11 +113,184 @@ feedback 互相关：30°/s 最大误差 3.7°、60°/s 7.4°、90°/s 11.1°，
 MoveIt 的执行时长监控会把暂停的时间算作超时：MoveIt 计划须相应配置（该计划已把"夹爪 goal 的执行时长监控"列为前置
 条件，机械臂轨迹同理）。
 
-**风险**：`motion_done = 3`（物体掉落）未实测；夹爪 action 的目标回调与结果发布共用插件节点的 executor 线程，
+**风险**：夹住后物体掉落时，夹爪在没有指令的情况下自行继续闭合约 0.4–0.6 s（帧报 0，之后报 3；X2），驱动不视其为
+夹爪忙；这期间机械臂若在运动，G9（夹爪运动期间 `ServoJ` 不执行）是否适用未测；G13 的"夹住约 10 s 后闭环释放、
+此后抽走不再报 3"无记录数据，若属实，长时间夹持后的掉落检测不到，`gripper_object` 停在 `held`；夹爪 action 的目标回调与结果发布共用插件节点的 executor 线程，
 不阻塞实时循环（参考 JTC：实时侧只用无锁缓冲）；mock 仍用上游夹爪控制器，其卡住按开度速度判定、语义与真机不同
 （README 写明）；`gripper_controller` 的 `max_velocity`/`max_effort` 命令接口保留（mock 需要），真机上无人占用；
-JTC 速度缩放在 Jazzy 是较新的功能，行为以第 4 步的测试为准。
+JTC 速度缩放在 Jazzy 是较新的功能，行为以 4.42.1 源码为准（Context），升级 JTC 时须重读。
+
+## 测试
+
+不收等待超时的用例：测试里的轨迹与夹爪运动都在亚秒级。
+
+**假控制器**（`test/fake_controller.hpp`）需扩展：夹爪可在指定开度停下并报 `motion_done = 2`（夹住），之后可改报 3
+（掉落）；原地运动按 E5 的序列（先报 0、未完成，完成后位置再报 0 约 200 ms）。
+
+**A. 插件 + 假控制器**（现有 `test_hardware_interface.cpp` 的方式：ResourceManager + executor）
+
+| # | 场景 | 期望 | 来源 |
+|---|---|---|---|
+| A1 | 目标运动，帧 0 → 1 | SUCCEEDED，`stalled = false`；busy 清零 | — |
+| A2 | 目标运动，帧 0 → 2（夹住） | SUCCEEDED，`stalled = true`；busy 在报 2 时清零；`gripper_object = held`；随即发张开目标，夹爪张开 | E3 |
+| A3 | 夹住后帧改报 3 | `gripper_object = dropped`；运动中报 3 则目标 ABORTED | E3 |
+| A4 | 机械臂运动中收到目标 | 不发 `MoveGripper`、目标保持执行中；机械臂停下后发出并 SUCCEEDED | G8 |
+| A5 | 等待中收到新目标；运动中收到新目标 | 新目标被接受时旧目标 ABORTED；前者只发新目标，后者当前运动走完后再发新目标 | 1 |
+| A6 | 取消未发出的目标；取消已发出的目标 | 前者：CANCELED，`MoveGripper` 计数 0；后者：CANCELED，运动走完，之后不再发任何命令 | E4 |
+| A7 | 等待中的目标遇到停用、机器人故障、夹爪不可用、`~/gripper/activate` | 目标 ABORTED；恢复/重新激活后夹爪不动 | 1 |
+| A8 | 硬件未激活、夹爪未激活或报故障时发目标 | 目标被拒绝 | 1 |
+| A10 | 目标等于当前开度 | 照发 `MoveGripper` | 1 |
+| A11 | 原地运动（非 0 目标）按 E5 序列 | 对外开度全程不报 0；目标为 0 时照报 0；下一次运动或激活后不再沿用旧开度 | E5 |
+| A12 | 暂停接口 | `speed_scaling_factor` 平时 1.0；从发出 `MoveGripper` 到帧报完成（1 或 2）为 0.0；激活夹爪期间 0.0；停用后 1.0 | 4、5 |
+| A13 | 夹爪运动中命令变化 | 不发给控制器（`servoj_while_gripper_moves == 0`）、不保护停止、不停用；`arm_commands = paused (gripper busy)`；帧报夹爪完成的同一周期起命令放行 | E2、4 |
+| A14 | 保护停止或停用后读 `~/status` | `arm_commands` 不再报暂停；无 `gripper_commands` 键；有 `gripper_object` | 其他、1 |
+| A15 | action 名 | 解析为 `/<ns>/gripper_controller/gripper_cmd`，类型 `ParallelGripperCommand` | 1 |
+
+**B. ControllerManager + JTC + 插件 + 假控制器**（新的测试装置；验证插件与 JTC 的配合，JTC 自身行为见 Context）
+
+| # | 场景 | 期望 | 来源 |
+|---|---|---|---|
+| B1 | 夹爪运动中发 J6 +2°/0.5 s | 暂停期间 `controller_state` 的 reference 不变、无路径容差中止；夹爪完成后继续，SUCCEEDED | E2 |
+| B2 | 夹爪运动中发只给位置的单点目标（J6 +15°，0.5 s，线性插值 30°/s） | 同 B1；恢复后无保护停止（冻结时命令超前一个周期） | 4 |
+| B5 | 轨迹运行中发夹爪目标 | 夹爪等轨迹结束才发；轨迹 SUCCEEDED，目标 SUCCEEDED | G8 |
+| B6 | 暂停中取消轨迹 | CANCELED；夹爪完成后机械臂不动、无保护停止 | 4 |
+
+**C. mock 管线**（手动）：`ros2 launch fr_robot_driver fr_control.launch.py gripper:=pgi140` 后，JTC 为 active；
+`speed_scaling/speed_scaling_factor` 存在且为 1.0；`ros2 action list -t` 列出 `/gripper_controller/gripper_cmd`
+`[control_msgs/action/ParallelGripperCommand]`，开合各一次 SUCCEEDED。
+
+**D. 真机**（操作者发起夹爪指令；J6 范围与速度按维护者许可）
+
+| # | 场景 | 期望 | 来源 |
+|---|---|---|---|
+| D1 | 夹爪 100 → 50 % 期间发 J6 +2°/4 s | 暂停、夹爪完成后继续，SUCCEEDED，无保护停止 | E2 |
+| D2 | 夹爪运动期间发 0 → +30°（30°/s） | 同 D1 | E2、4 |
+| D3 | 50 % 处放物体后命令 0 | 报 2 时 `gripper_busy` 清零；SUCCEEDED、`stalled = true`、`gripper_object = held`；随即张开成功 | E3 |
+| D4 | 机械臂运动中发夹爪目标后取消；夹住时发张开目标后再发新目标取代 | 机械臂停下后夹爪不动；只执行最新目标 | E4 |
+| D5 | 原地 `MoveGripper`（100 → 100 %、50 → 50 %） | `joint_states` 的开度不报 0 | E5 |
+| D6 | J6 余弦轨迹，最高 180°/s | SUCCEEDED，不因路径容差中止；记录最大误差与滞后 | E1 |
+| D7 | `fr_servo_bench` 测 118 ms 的组成 | 只记录数据，不作通过条件 | E1 |
+
+**现有测试的变动**：删除 `Gripper.AnArmCommandThatStaysAwayAfterTheGripperIsAProtectiveStop`（由 A13 取代）；
+`Gripper.NothingIsSentUnlessTheControllerStartedOnAUsableGripper`（武装）改写为 A7、A8；`Gripper.CommandsAreSentOnlyWhenTheyChange`
+改写为 A10；`Gripper.AnArmMotionIsRefusedWhileTheGripperMovesWithoutDeactivating` 并入 A13；
+`Gripper.TheOpeningIsHeldWhileTheFrameSaysZero` 扩展为 A11。
 
 ## Result
 
-（未开始）
+### 动代码前的三项真机预实验（2026-10-14 实测，FR5 + 大寰 PGI-140，控制器 v3.8.4.2）
+
+在正式修改驱动代码前，由操作者在机械臂旁全程监护，直接通过 SDK / 状态帧高频轮询（与 E5 一致）完成夹爪实验，通过 `fr_servo_bench` 完成机械臂实验。
+
+#### X1：`MoveGripper` 能否打断正在进行的夹爪运动
+
+- **操作**：夹爪由 100 % 往 0 % 走，走到物理半程（约 1200 ms，开度约 73 %）时，由主机发出 `MoveGripper(1, 80, 50, 20, 30000)`。
+- **实测数据与时间线**：
+  ```text
+  [    15.8 ms] Sent MoveGripper(0%) -> ok=1 code=0
+      19.7 ms | pos=  0% | done=0  (G10 起始瞬态)
+     909.5 ms | pos= 95% | done=0
+  [  1200.4 ms] Calling MoveGripper(80%) (尝试打断)...
+    1320.0 ms | pos= 73% | done=0
+    1719.9 ms | pos= 49% | done=0
+    2129.9 ms | pos= 26% | done=0
+    2529.7 ms | pos=  7% | done=0
+    2729.6 ms | pos=  0% | done=0  (原目标 0% 完整走完到底)
+  [  2736.7 ms] MoveGripper(80%) returned after 1536.3 ms -> ok=1 err=0 code=0
+    3640.0 ms | pos= 12% | done=0  (开始执行新目标 80%)
+    4039.9 ms | pos= 34% | done=0
+    4449.7 ms | pos= 57% | done=0
+    4850.1 ms | pos= 77% | done=0
+    5259.5 ms | pos= 80% | done=0
+    5459.8 ms | pos= 80% | done=1  (新目标完成)
+  ```
+- **结论**：
+  1. 第二次 `MoveGripper` **在控制器端被阻塞挂起整整 1536.3 ms**，直到前一个运动完全走完到达 0% 之后才返回 `code=0`。
+  2. 夹爪**绝不立即转向**，而是**先走完原目标，再执行新目标**。
+  3. `motion_done` 序列：前一个运动期间为 0；在原运动结束时因新运动紧接着开始，`motion_done` 保持为 0，直到 80% 到位后变为 1。
+  4. **影响**：完全证实“控制器无法中止已发出的夹爪运动”。A5、A6 设计（取代和取消时必须等待当前运动走完）完全成立，计划无需修改。结论记入 `sdk_quirks.md` G15。
+
+#### X2：夹住之后的帧序列，以及 `motion_done = 3` 何时出现
+
+- **操作**：
+  1. 发出 `MoveGripper(0%)` 夹住放置的物体，稳定报 `motion_done = 2`（位置 27 %）。
+  2. 在夹住后 6 秒用力将物体抽出，状态帧 1 ms 高频记录抽走脱出瞬间及之后的变化。
+  3. 从夹持状态（`done = 2`）直接发出 `MoveGripper(100%)` 张开指令，记录完整序列。
+- **实测数据与时间线**：
+  - **抽走脱落时间线**：
+    ```text
+    2319.2 ms | pos= 27% | done=2 | fault=0  (夹住物体，进入稳定夹持)
+    8589.3 ms | pos= 23% | done=2 | fault=0  (操作者用力拉动物体，开度微变)
+    8789.4 ms | pos= 23% | done=0 | fault=0  (物体脱出瞬间，阻力消失，夹爪继续闭合，done 变 0)
+    8989.1 ms | pos=  6% | done=0 | fault=0  (高速闭合中)
+    9199.0 ms | pos=  6% | done=3 | fault=0  (闭合到底未受阻，触发脱落，瞬间报 3)
+    9399.0 ms | pos=  0% | done=3 | fault=0  (完全闭合到 0%，持续保持报 3)
+    ```
+  - **从夹住状态张开时间线**：
+    ```text
+        14.7 ms | ------------------------ EVENT: CMD MoveGripper(100%)
+        14.7 ms | pos=  0% | done=0  (G10 瞬态，实际从 28% 张开)
+       907.7 ms | pos= 32% | done=0
+      1308.0 ms | pos= 54% | done=0
+      1718.0 ms | pos= 78% | done=0
+      2117.8 ms | pos= 97% | done=0
+      2527.7 ms | pos=100% | done=0
+      2727.8 ms | pos=100% | done=1
+      Sequence of done: 2 -> 0 -> 1
+    ```
+- **结论**：
+  1. 夹持命令（0%）在夹住后若物体脱出，控制器力矩闭环仍生效并驱动夹爪继续闭合，闭合到底未受阻后**报 `motion_done = 3` 且持续保持**！从脱出到报 3 仅约 400 ms。
+  2. 从夹住状态（`done = 2`）发张开指令，序列严格为 **`2 -> 0 -> 1`**。“先报 0、再报非 0”的完成判定完全成立。
+  3. **影响**：真机原样转发大寰的寄存器状态 3（掉落）。**计划中关于“报 3 → ABORTED / `gripper_object = dropped`”的处理完全保留**，A3 用例真实有效。
+
+#### X3：180°/s 下滞后测量与 118 ms 组成拆解
+
+- **操作**：J6 升余弦往返（从起点摆到 +摆幅再回来），周期 0.5 s，历时 4 s（8 个完整周期），分别在峰值 90、135、180°/s 下由 `fr_servo_bench` 记录每条命令点与状态反馈帧，通过互相关分析计算滞后时间与最大跟随误差；并进行 `prefill = 1` 的对照实验。
+- **实测数据对比**（`cmdT = 8 ms`）：
+  | 峰值速度 | 摆幅 | prefill | 互相关滞后 (lag) | 最大命令/反馈误差 | 固件队列均值 (`mc_queue_len`) | 结果 |
+  | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+  | **90°/s** | 0 → 14.32° | 3 | **133 ms** | $10.48^\circ$ ($0.183\text{ rad}$) | 2.46 条 | 零故障，平滑完成 |
+  | **135°/s** | 0 → 21.49° | 3 | **121 ms** | $14.81^\circ$ ($0.258\text{ rad}$) | 1.93 条 | 零故障，平滑完成 |
+  | **180°/s** | 0 → 28.65° | 3 | **122 ms** | $19.57^\circ$ ($0.342\text{ rad}$) | 2.10 条 | 零故障，平滑完成 |
+  | **135°/s (对照)** | 0 → 21.49° | 1 | **88 ms** | $11.29^\circ$ ($0.197\text{ rad}$) | 0.21 条 | 零故障，滞后骤降 33 ms |
+- **结论**：
+  1. 滞后不随速度发散：90、135、180°/s 下为 133、121、122 ms，连同 E1（≤ 90°/s，116–121 ms）在 116–133 ms 之间。
+     最大误差与纯延迟模型相符：摆幅 A、周期 T、滞后 τ 时误差幅值为 A·sin(πτ/T)，180°/s 时 28.65°·sin(π·0.122/0.5) ≈ 19.9°，
+     实测 19.57°。
+  2. 180°/s 下最大跟随误差 0.342 rad。路径容差按滞后最大值 133 ms 取 0.85 rad（Approach 第 4 步），裕量约 2.5 倍；
+     最快关节（3.2 rad/s）的预期误差 0.43 rad，裕量 2 倍。
+  3. 滞后组成：实测的只有 `prefill` 对照——3 → 1 时滞后少 33 ms（121 → 88 ms），但队列均值只少约 1.7 条（1.93 → 0.21，
+     约 14 ms），差值未解释。其余各项（主机端 `kLead` 约 24 ms、XML-RPC 往返约 4 ms〔S17 实测 3.8 ms〕、控制器内部插补与
+     总线传输、伺服驱动器与机械响应、状态帧采样与传输）均为推断，未单独测量。
+  4. `prefill = 1` 时队列均值 0.21，运动中大部分时间为空（欠载），与 S17（运动中队列须非空且稳定）冲突：降低 `prefill`
+     不能直接用来减少滞后，留给减少滞后的专门计划。
+
+#### X4：上电后未调 `GetGripperConfig` 时，状态帧的夹爪字段是否更新
+
+- **操作**（2026-10-14，控制器重启后，示教器与 Web 端的夹爪页面均未打开；操作者在急停旁，机械臂不动）：
+  1. 只读状态帧 5 s（不发任何 XML-RPC）；
+  2. `ActGripper(1, 1)`；
+  3. `MoveGripper` 50 %、100 %；
+  4. 调一次 `GetGripperConfig`（只读），再重复第 3 步作对照。
+- **实测**：
+  ```text
+  1. 500 帧：active=0x0000 pos=0% done=0 fault=0 temp=0 voltage=0
+  2. ActGripper 21.8 ms 返回 0；739 ms 后 active=0x0001，pos=0% done=0（同 G5）
+  3. MoveGripper(50)：0% → 95 / 73 / 52 / 50 %（0.82 / 1.23 / 1.63 / 2.03 s），2.23 s done=1
+     MoveGripper(100)：0% → 54 / 76 / 97 / 100 %，2.29 s done=1
+  4. GetGripperConfig → [0, 1, 3, 0, 0]（错误码 0，company=1，device=3）
+     重复第 3 步：序列与时间同第 3 步（差 ≤ 40 ms）
+  ```
+- **结论**：
+  1. 不调 `GetGripperConfig`，激活位、开度、完成标志都正常更新；调用前后行为一致。驱动不需要调用它。
+  2. `GetGripperConfig` 读回 company 1（SDK 文档：1-Robotiq；大寰为 4）、device 3（文档未定义），但大寰 PGI-140
+     工作正常、无故障：读回的厂商号与夹爪能否工作无关。
+  3. `gripper_temp`、`gripper_voltage` 在 PGI-140 上始终为 0。
+  4. 记入 `sdk_quirks.md` G17。
+
+---
+
+### 驱动代码修改与测试进度
+
+（以下待驱动代码修改完成后更新）
+
