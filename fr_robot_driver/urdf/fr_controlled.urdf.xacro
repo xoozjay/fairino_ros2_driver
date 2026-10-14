@@ -14,7 +14,7 @@
       ip, cmd_t_ms, prefill, rt_priority, update_rate_hz, namespace, allow_unverified_version,
       allow_unknown_model, fk_check, fk_position_tolerance_mm, fk_angle_tolerance_deg:
                              real hardware only, see fr_ros2_control.xacro
-      mock_gpio_commands     : mock only, a loop-back command interface on fr_status/fault_class
+      mock_gpio_commands     : mock only, loop-back command interfaces on fr_status/fault_class and speed_scaling/speed_scaling_factor
       gripper                : end effector on tool0: none (default) or pgi140
                                (gripper_dahuan_pgi140, one more joint in ros2_control)
       gripper_index          : real hardware only, the controller's gripper number (default 1)

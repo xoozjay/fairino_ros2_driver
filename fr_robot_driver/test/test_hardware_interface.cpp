@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -676,6 +677,7 @@ TEST(Gripper, MockDescriptionHasTheFingerJoint)
     EXPECT_TRUE(rm.command_interface_exists(c)) << c;
   }
   EXPECT_TRUE(rm.state_interface_exists("left_finger_joint/velocity"));
+  EXPECT_TRUE(rm.state_interface_exists("speed_scaling/speed_scaling_factor"));
   EXPECT_FALSE(rm.state_interface_exists("right_finger_joint/position"));   // a mimic joint: TF only
   EXPECT_NE(params.robot_description.find("<parent link=\"tool0\"/>"), std::string::npos);
 }
@@ -899,6 +901,42 @@ TEST(HardwareInterface, TheStreamPausesWhileTheArmStandsAndResumesWithAPrefill)
   r.run(30);
   EXPECT_EQ(r.fake.servoJ().size(), stopped);        // standing again: paused
   EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_ACTIVE);
+}
+
+TEST(Gripper, TrajectoriesPauseWhileTheGripperIsBusy)
+{
+  const char * kScaling = "speed_scaling/speed_scaling_factor";
+  {
+    Rig plain;                                       // no gripper: never paused
+    ASSERT_TRUE(plain.configure());
+    ASSERT_TRUE(plain.activate());
+    plain.run(3);
+    EXPECT_EQ(plain.state(kScaling), 1.0);
+  }
+  Rig r("", 125, kWithGripper);
+  r.fake.gripper_activation_ms = 300;
+  r.fake.gripper_motion_ms = 300;
+  ASSERT_TRUE(r.configure());
+  ASSERT_TRUE(r.activate());
+  r.run(3);
+  EXPECT_EQ(r.state(kScaling), 1.0);
+
+  // the operator's activation moves the gripper too (it opens fully)
+  auto activation = std::async(std::launch::async, [&] {return r.trigger("gripper/activate");});
+  EXPECT_TRUE(cycleUntil(r, [&] {return r.state(kScaling) == 0.0;}));
+  while (activation.wait_for(0s) != std::future_status::ready) {r.cycle();}
+  ASSERT_TRUE(activation.get().first);
+  r.cycle();
+  EXPECT_EQ(r.state(kScaling), 1.0);
+
+  GripperController g(r);
+  g.start();
+  g.command(0.02);
+  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 1;}));
+  r.cycle();
+  EXPECT_EQ(r.state(kScaling), 0.0);                 // from the MoveGripper...
+  ASSERT_TRUE(cycleUntil(r, [&] {return r.state(kScaling) == 1.0;}));
+  EXPECT_NEAR(r.state(kFinger), 0.02, 1e-9);         // ...until the frame shows it done
 }
 
 TEST(Gripper, ACommandWaitsForTheArmToStand)

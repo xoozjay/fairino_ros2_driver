@@ -148,6 +148,17 @@ CallbackReturn FrRobotHardwareInterface::on_init(
   }
   fault_class_interface_ = gpio_name + "/fault_class";
 
+  // ---- gpio speed_scaling: 0 pauses the joint_trajectory_controller while the gripper is busy ----
+  const std::string scaling_name = param("tf_prefix", "") + "speed_scaling";
+  const auto scaling = std::find_if(info.gpios.begin(), info.gpios.end(),
+      [&](const auto & g) {return g.name == scaling_name;});
+  if (scaling == info.gpios.end() || !has(scaling->state_interfaces, "speed_scaling_factor")) {
+    RCLCPP_ERROR(log, "the URDF needs <gpio name=\"%s\"> with the state interface 'speed_scaling_factor'",
+      scaling_name.c_str());
+    return CallbackReturn::ERROR;
+  }
+  speed_scaling_interface_ = scaling_name + "/speed_scaling_factor";
+
   // ---- parameters ----
   bool ok = true;
   const auto integer = [&](const char * key, int fallback, int lo, int hi) {
@@ -728,6 +739,10 @@ return_type FrRobotHardwareInterface::read(const rclcpp::Time &, const rclcpp::D
   if (hasGripper()) {
     readGripper(snap, fc);
   }
+  // The arm cannot move while the gripper does (sdk_quirks G9): trajectories wait meanwhile. Set
+  // here, so the controllers' update in this cycle already sees a motion write() started last cycle.
+  const bool gripper_busy = hasGripper() && gripper_busy_.load() != GripperBusy::Idle;
+  set_state(speed_scaling_interface_, active_.load() && gripper_busy ? 0.0 : 1.0);
   if (active_.load() && fc != FaultClass::None) {
     sender_->halt();  // stop at once; write() answers DEACTIVATE
   }

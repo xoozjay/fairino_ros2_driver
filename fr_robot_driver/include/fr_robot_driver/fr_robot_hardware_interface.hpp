@@ -111,6 +111,7 @@ private:
   double fk_angle_tolerance_deg_ = 1.0;
   Kinematics kinematics_;
   std::string fault_class_interface_;  // "<tf_prefix>fr_status/fault_class"
+  std::string speed_scaling_interface_;  // "<tf_prefix>speed_scaling/speed_scaling_factor"
   std::vector<std::string> joint_names_;
   std::vector<double> max_step_deg_;  // per joint, per segment: URDF velocity limit * cmdT
 

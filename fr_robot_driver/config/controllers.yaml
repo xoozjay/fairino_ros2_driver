@@ -37,6 +37,10 @@ controller_manager:
       - position
       - velocity
     allow_partial_joints_goal: false
+    # 0 while the gripper is busy (real hardware; the mock keeps 1): the trajectory's time stands
+    # still, so it waits instead of running ahead of an arm that cannot move (sdk_quirks G9)
+    speed_scaling:
+      state_interface: __PREFIX__speed_scaling/speed_scaling_factor
     # A goal must be reached within 0.005 rad, at most 0.5 s after the trajectory's end, and the
     # arm must follow within 0.26 rad on the way. A trajectory the hardware refuses (the arm is held
     # while the gripper moves) is ABORTED as soon as it is 0.26 rad ahead, and the controller then

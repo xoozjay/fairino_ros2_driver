@@ -70,8 +70,9 @@ ros2 control set_hardware_component_state <tf_prefix>fr_robot active
 ros2 control set_controller_state joint_trajectory_controller active
 ```
 
-ros2_control 状态接口只有 `<tf_prefix>fr_status/fault_class`（经 `joint_state_broadcaster` 发布在
-`dynamic_joint_states`），其余都在 `~/status`。
+ros2_control 状态接口只有 `<tf_prefix>fr_status/fault_class` 与 `<tf_prefix>speed_scaling/speed_scaling_factor`（经
+`joint_state_broadcaster` 发布在 `dynamic_joint_states`），其余都在 `~/status`。`speed_scaling_factor` 平时为 1.0，
+真机上夹爪忙时为 0.0：`joint_trajectory_controller` 的轨迹时间随之停住，轨迹暂停、夹爪完成后从原处继续（对标 UR 驱动）。
 
 可选 `rt_priority`（1–99，默认 0 = 关）：伺服发送线程用 `SCHED_FIFO`；没有权限（`CAP_SYS_NICE`、rtprio 限额）时告警并照常运行。
 不是必需的：固件队列能吸收约 `prefill × cmd_t_ms` 的调度抖动。
@@ -83,7 +84,8 @@ ros2_control 状态接口只有 `<tf_prefix>fr_status/fault_class`（经 `joint_
   更快的控制周期按整数倍抽取（500 Hz、8 ms → 每 4 个周期发 1 条）。
 - `ServoJ` 不受全局速度/加速度限制（sdk_quirks S14）：保护靠 URDF 限位、`enforce_command_limits`（真机分支默认开）
   和插件的步长检查。
-- mock 分支加 `mock_gpio_commands:=true` 会给 `fr_status/fault_class` 加回环命令接口，用来演练上层的故障处理。
+- mock 分支加 `mock_gpio_commands:=true` 会给 `fr_status/fault_class` 与 `speed_scaling/speed_scaling_factor` 加回环
+  命令接口，用来演练上层的故障处理与轨迹暂停。
 
 ### 夹爪（大寰 PGI-140）
 
@@ -236,7 +238,7 @@ rviz2 -d $(ros2 pkg prefix fr_robot_driver)/share/fr_robot_driver/rviz/dual_cell
 
 ```
 urdf/fr_controlled.urdf.xacro       顶层：fr_description 宏 + 可选夹爪宏 + fr_ros2_control 宏
-urdf/fr_ros2_control.xacro          <ros2_control> 生成宏（joint 名带 tf_prefix；mock 与真机同名 fr_status/fault_class）
+urdf/fr_ros2_control.xacro          <ros2_control> 生成宏（joint 名带 tf_prefix；mock 与真机同名 fr_status、speed_scaling gpio）
 src/ include/ fr_robot_driver.xml   硬件插件 FrRobotHardwareInterface（+ reset_policy.hpp）
 test/                              插件状态机测试（假控制器 + ResourceManager）
 urdf/table_cell.urdf.xacro          工作台静态场景（world + 台面）

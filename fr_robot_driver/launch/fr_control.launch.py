@@ -232,7 +232,7 @@ def generate_launch_description():
                               description='real hardware: activate the component after startup '
                                           '(false: leave it inactive, e.g. to reset a fault first)'),
         DeclareLaunchArgument('mock_gpio_commands', default_value='false',
-                              description='mock only: a loop-back command interface on fr_status/fault_class'),
+                              description='mock only: loop-back command interfaces on the fr_status and speed_scaling gpios'),
         DeclareLaunchArgument('gripper', default_value='none',
                               description='end effector on tool0: none or pgi140'),
         DeclareLaunchArgument('gripper_index', default_value='1',

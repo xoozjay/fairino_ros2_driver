@@ -27,8 +27,11 @@
       gripper_index           : real hardware only, the controller's gripper number (default 1)
 
     Both branches expose the same <gpio name="<tf_prefix>fr_status"> with one state interface,
-    fault_class (docs/fault_handling.md section 7). With the mock, mock_gpio_commands:=true adds a
-    command interface that loops back into it, to rehearse fault handling in upper layers.
+    fault_class (docs/fault_handling.md section 7), and <gpio name="<tf_prefix>speed_scaling"> with
+    speed_scaling_factor, the joint_trajectory_controller's speed scaling (as ur_robot_driver): 1.0,
+    and 0.0 on real hardware while the gripper is busy, so a trajectory waits instead of running
+    ahead of an arm that cannot move (sdk_quirks G9). With the mock, mock_gpio_commands:=true adds
+    command interfaces that loop back into both, to rehearse fault handling and pauses in upper layers.
 
     Real hardware (fr_robot_driver/FrRobotHardwareInterface) parameters:
       ip                         : controller address (default 192.168.58.2)
@@ -89,6 +92,13 @@
   <xacro:macro name="_fr_status_gpio" params="tf_prefix">
     <gpio name="${tf_prefix}fr_status">
       <state_interface name="fault_class"><param name="initial_value">0.0</param></state_interface>
+    </gpio>
+  </xacro:macro>
+
+  <!-- Internal helper: the speed_scaling gpio, identical for mock and real hardware. -->
+  <xacro:macro name="_fr_speed_scaling_gpio" params="tf_prefix">
+    <gpio name="${tf_prefix}speed_scaling">
+      <state_interface name="speed_scaling_factor"><param name="initial_value">1.0</param></state_interface>
     </gpio>
   </xacro:macro>
 
@@ -169,6 +179,7 @@
       </xacro:if>
 
       <xacro:_fr_status_gpio tf_prefix="${tf_prefix}"/>
+      <xacro:_fr_speed_scaling_gpio tf_prefix="${tf_prefix}"/>
 
     </ros2_control>
   </xacro:macro>
