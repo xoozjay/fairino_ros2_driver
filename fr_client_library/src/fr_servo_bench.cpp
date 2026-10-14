@@ -99,6 +99,13 @@ struct Sample
   double t;  // seconds since the stream started
   int queue;
   unsigned robot_state;
+  double pos;
+};
+
+struct CmdPoint
+{
+  double t;
+  double pos;
 };
 }  // namespace
 
@@ -154,7 +161,8 @@ int main(int argc, char ** argv)
 
   // ---- plan ----
   const double peak_step_deg = a.amplitude_deg * 0.5 * 6.283185307179586 / a.cycle_s * a.cmd_t_ms / 1000.0;
-  if (peak_step_deg > 1.0) {   // the firmware faults on large jumps (sdk_quirks S11)
+  // the firmware faults on large jumps (sdk_quirks S11); 1.5 deg admits 180 deg/s at 8 ms (1.44 deg)
+  if (peak_step_deg > 1.5) {
     std::fprintf(stderr, "peak step %.2f deg per command is too large; lengthen --cycle-s\n", peak_step_deg);
     return 2;
   }
@@ -201,7 +209,7 @@ int main(int argc, char ** argv)
         if (receiver.latest(s) && s.frame_count != last) {
           last = s.frame_count;
           samples.push_back({std::chrono::duration<double>(Clock::now() - t0).count(),
-              s.state.mc_queue_len, s.state.robot_state});
+              s.state.mc_queue_len, s.state.robot_state, s.state.jt_cur_pos[jx]});
         }
         std::this_thread::sleep_for(500us);
       }
@@ -210,10 +218,14 @@ int main(int argc, char ** argv)
   std::mt19937 rng(12345);
   std::uniform_real_distribution<double> jitter(0.0, a.jitter_ms);
   long refused = 0;
+  std::vector<CmdPoint> cmd_points;
+  cmd_points.reserve(static_cast<std::size_t>(ticks) + 10);
   const auto ms = [](double v) {return std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(v));};
   for (long k = 0; k <= ticks; ++k) {   // k == ticks is the final point, back at rest at home
     std::this_thread::sleep_until(t0 + ms(a.cmd_t_ms * k + (a.jitter_ms > 0 ? jitter(rng) : 0.0)));
-    if (!sender.enqueue(plan(k))) {++refused;}
+    const auto p = plan(k);
+    cmd_points.push_back({std::chrono::duration<double>(Clock::now() - t0).count(), p[jx]});
+    if (!sender.enqueue(p)) {++refused;}
   }
   const double produced_s = std::chrono::duration<double>(Clock::now() - t0).count();
   const double trim_ppm = sender.stats().trim_ppm;  // before the drain, which pulls it away
@@ -281,6 +293,56 @@ int main(int argc, char ** argv)
   std::printf("ServoJ call: mean %.0f us, max %llu us   produced %ld commands in %.2f s (%.2f ms mean)\n",
     st.mean_call_us, static_cast<unsigned long long>(st.max_call_us), ticks + 1, produced_s,
     produced_s * 1000.0 / (ticks + 1));
+
+  // ---- lag & tracking error via cross-correlation ----
+  if (!cmd_points.empty() && !samples.empty()) {
+    const double t_start = cmd_points.front().t;
+    const double t_end = cmd_points.back().t;
+    const auto interp = [](const auto & vec, double t) {
+      if (t <= vec.front().t) return vec.front().pos;
+      if (t >= vec.back().t) return vec.back().pos;
+      size_t l = 0, r = vec.size() - 1;
+      while (l + 1 < r) {
+        size_t mid = (l + r) / 2;
+        if (vec[mid].t <= t) l = mid; else r = mid;
+      }
+      double frac = (t - vec[l].t) / (vec[r].t - vec[l].t);
+      return vec[l].pos + frac * (vec[r].pos - vec[l].pos);
+    };
+
+    double max_err = 0;
+    for (double t = t_start; t <= t_end; t += 0.002) {
+      double c = interp(cmd_points, t);
+      double f = interp(samples, t);
+      max_err = std::max(max_err, std::abs(c - f));
+    }
+
+    int best_lag_ms = 0;
+    double best_mse = 1e9;
+    for (int lag = 0; lag <= 300; ++lag) {
+      double dt = lag * 0.001;
+      double mse = 0;
+      int count = 0;
+      for (double t = t_start; t <= t_end - dt; t += 0.002) {
+        double c = interp(cmd_points, t);
+        double f = interp(samples, t + dt);
+        double diff = c - f;
+        mse += diff * diff;
+        ++count;
+      }
+      if (count > 0) {
+        mse /= count;
+        if (mse < best_mse) {
+          best_mse = mse;
+          best_lag_ms = lag;
+        }
+      }
+    }
+    std::printf("\ntracking & latency (J%d swing 0 to %.2f deg and back):\n", a.joint, a.amplitude_deg);
+    std::printf("  max error between cmd and fb: %.3f deg (%.4f rad)\n", max_err, max_err * M_PI / 180.0);
+    std::printf("  cross-correlation lag: %d ms (residual rms %.4f deg)\n", best_lag_ms, std::sqrt(best_mse));
+  }
+
   std::printf("end: joint %d is %+.4f deg from the start, main_code=%d, ServoMoveEnd code=%d, comm error=%d\n",
     a.joint, final_err, snap.state.main_code, ended.code, static_cast<int>(sender.commError()));
   return sender.commError() == ApiError::None && snap.state.main_code == 0 ? 0 : 1;
