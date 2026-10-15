@@ -181,6 +181,8 @@ XML-RPC 改 xmlrpc-c 合入后各立计划（TODO.md）。问题分析与证据�
     controllers in read cycle"（ros2_control 内部，未影响恢复）
   - 已激活时再次激活（硬件 active、无故障、机械臂静止、夹爪 50 %）：被拒（`gripper 1 is already active`），未发
     `ActGripper`，`~/status` 无变化，开度保持 50 %
+- **缺 `Assisted-by` 的提交**：N1、N3、N4、N8、N11（`b68e555`、`d6dda11`、`5e83e54`、`d79fb71`、`59092ea`）由 agent 编写，
+  其来源提交在 `agent/dev` 上就没有尾注，工具与模型已不可考；未重写历史补记（会使计划中引用的提交哈希失效）
 - 未做：合入
 
 ### 被后续计划取代的内容与最终形态

@@ -17,12 +17,23 @@
 - [ ] 状态帧新鲜度只看接收时间，不查 `frame_cnt` 递增：控制器发合法但帧号冻结的帧时漏判（风险极低）
       —— done when: 决定是否在 `read()` 里加帧号检查
 - [ ] 真机双机（`dual_fr_cell.launch.py`，显式 `alice_ip` / `bob_ip`）—— done when: 两台真机跑通
+- [ ] 跟随监控实际失效：跟随滞后约 120 ms（S19）是结构性的，JTC 路径容差只能放到 0.85 rad（约 49°），跟随异常只剩固件碰撞检测兜底。
+      插件知道每条命令的发出时刻，可比较反馈与 τ 之前的命令，用紧得多的容差 —— done when: 单独计划 done，真机标定 τ 与容差
+- [ ] 插件 `FrRobotHardwareInterface` 职责过重（硬件接口、ROS 节点、夹爪 action、两个服务、状态话题、清理与链路监视线程，
+      约 15 个原子量、3 把锁）：ROS 接口移到控制器层（夹爪 action、`reset_error`、`gripper/activate` 经 GPIO 接口，
+      对标 UR 的 GPIO 控制器），插件只留接口与状态机 —— done when: 单独计划 done
 - [ ] 整条轨迹交给控制器执行（对标 UR 的 `passthrough_trajectory_controller`；3.8.4 候选 `NewSpline*`、`LoadTrajectoryJ`/`MoveTrajectoryJ`）—— done when: 评估精度、延迟与中止语义后决定是否立计划
 
 ### 规划层（fr_moveit_config）
 
 计划：[docs/plans/20261013-moveit-config.md](docs/plans/20261013-moveit-config.md)（单臂 + 整圆验收；双臂另立）
 
+- [ ] `tf_prefix` 非空时 MoveIt 配置不可用：`move_group.launch.py` 改控制器关节名时读顶层 `joint_trajectory_controller`，
+      它实际在 `moveit_simple_controller_manager` 下，前缀未加上（MoveIt 找不到控制这些关节的控制器）；`joint_limits.yaml`
+      的键与夹爪关节同样无前缀（Pilz 缺加速度限位）。README 所称"任意 tf_prefix"不成立 —— done when: 修复并加带
+      `tf_prefix` 的配置测试
+- [ ] `fr_moveit_config/config/joint_limits.yaml` 对所有型号写死 FR5 速度（3.15/3.20 rad/s），覆盖 URDF；`fairino3_mt_v6`
+      的 URDF 为 2.618/3.141，MoveIt 会超速规划、被驱动步长检查拒绝 —— done when: 速度只取自 URDF，此文件只留加速度
 - [ ] 多机规划场景（双臂互碰检查）——ros2_control 不查碰撞，工作台 demo 的互穿轨迹要靠它拒绝
 
 ### 单元组合层
@@ -30,6 +41,16 @@
 - [ ] 空闲停发 / 恢复与夹爪轮流动时的异响 —— done when: 用较大、较快的机械臂运动实测（小幅轨迹听不出）
 - [ ] 工作台场景升级为完整单元（对标 `my_robot_cell` / `my_dual_robot_cell`）
 - [ ] 评估 Gazebo / Ignition 仿真路线（当前只有 mock）
+
+### 代码与测试
+
+- [ ] 真机分支要求夹爪关节声明 `position`、`max_effort` 命令接口，插件从不读取（action 由插件直接提供）—— done when: 随插件重构删除或接上
+- [ ] `~/gripper/activate` 持 `api_mutex_` 最多 3 s，期间 `reset_error` 与同在默认回调组的状态定时器、夹爪目标定时器停住 —— done when: 随插件重构
+- [ ] 夹爪发送线程异常退出后 `post()` 恒为 false，已接受的夹爪目标永远等待、不中止 —— done when: 线程不在时目标 ABORTED
+- [ ] `fr_control.launch.py` 用 `1000 // cmd_t_ms` 算频率，`cmd_t_ms` 不整除 1000 时插件拒绝且报错指向 `update_rate_hz` —— done when: launch 直接校验
+- [ ] 临时文件名会冲突：launch 的控制器 yaml 只按 `tf_prefix` 命名，`test_trajectory_pause` 写固定 `/tmp/<ns>_controllers.yaml` —— done when: 用唯一文件名
+- [ ] 测试精简：插件里的夹爪用例经真 socket 与墙钟（`test_hardware_interface` 占 check 约 36 s）；自写 HTTP/XML-RPC 的测试随换库删除；
+      `test_robot_state.cpp` 与头文件 `static_assert` 重复；`test_srdf` 只验证能解析，抓不到 launch 配置错误 —— done when: 随插件重构与换库完成
 
 ### 杂项
 
