@@ -19,7 +19,7 @@ if [ -z "${AMENT_PREFIX_PATH:-}" ]; then
   set -u
 fi
 
-packages=(fr_client_library fr_description fr_robot_driver gripper_dahuan_pgi140)
+packages=(fr_client_library fr_description fr_robot_driver gripper_dahuan_pgi140 fr_moveit_config)
 
 cd "$ws"
 colcon build --packages-up-to "${packages[@]}"

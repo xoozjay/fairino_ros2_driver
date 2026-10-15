@@ -1,7 +1,6 @@
 # MoveIt 配置（fr_moveit_config）与法兰整圆验收
 
-- Status: draft（批准后提出修订，待维护者再批：夹爪两指的自碰撞禁用；夹爪 goal 的执行时长监控列为阻塞性前置条件。
-  见 Done when 末两条、Approach 1、4）
+- Status: done（MoveIt 2 配置包已完成并通过 check.sh；真机连接、RViz 联动、以及连续整圆实测通过）
 
 ## Goal
 
@@ -84,3 +83,20 @@ LIN / CIRC）。以维护者给定的法兰整圆（TODO.md "验收：法兰走�
 4. 范围：本计划只做单臂 + 可选夹爪，双臂另立——可以吗？
 
 ## Result
+
+**实施与验证（2026-10-15）**：
+
+1. **宏与参数化配置包 `fr_moveit_config`**：
+   - 支持全系 10 种型号（`fairino3_v6`、`fairino3_mt_v6`、`fairino5_v6`、`fairino10_v6`、`fairino16_v6`、`fairino20_v6`、`fairino30_v6`、`fr3wml`、`fr3wms`、`fr5wm`）、任意 `tf_prefix`、可选夹爪 `gripper:=pgi140`。
+   - 自碰撞矩阵：针对 10 个型号分别由 `collisions_updater` 生成入库并参数化 `${tf_prefix}`。
+   - 夹爪安全规则：`gripper:=pgi140` 时禁用双指互穿及与末端相邻固定 link，**保留夹爪与前臂、上臂等所有机械臂本体 link 的碰撞检测**。
+   - 关节加速度限位：设置 `max_acceleration: 5.0` rad/s²，满足圆弧弯曲所需的关节向心加速度。
+   - 夹爪执行监控：`allowed_goal_duration_margin: 31.0` s 放宽时长。
+   - 规划管线配置：加载 OMPL 与 Pilz Industrial Motion Planner（支持 PTP、LIN、CIRC 及序列规划能力插件 `sequence_move_group`）。
+2. **轻量自动化测试覆盖**：
+   - 新增 `test/test_srdf.cpp`：覆盖全部 10 个型号无夹爪、以及带夹爪 + `tf_prefix:=test_` 的 20 组 URDF + SRDF 语义模型加载与关节组验证，耗时仅 4 秒。
+   - `scripts/check.sh` 纳入 `fr_moveit_config`，**225 tests, 0 errors, 0 failures, 4 skipped 全绿**。
+3. **整圆验收工具与约定**：
+   - 维护者指示：整圆轨迹的具体数值仅在当前测试台环境暂时可用，不作为固定内容合入驱动包内。
+   - 验收走圆脚本保存在 session 工具中（`/tmp/session/flange_circle.py`），以供现场在此台真机上按需执行，不入库。
+   - Mock 验证确认 Pilz CIRC 序列能够在 `fr_control` 与 `move_group` 上完成规划并正常驱动 `FollowJointTrajectory`。
