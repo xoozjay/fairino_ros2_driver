@@ -100,8 +100,9 @@ ros2_control 状态接口只有 `<tf_prefix>fr_status/fault_class` 与 `<tf_pref
   之后，标志位非 0、且标志位与开度至少 300 ms 未变（新运动开始后帧里会短暂再现上一次的标志位，G17），目标不为 0 %
   时开度也不为 0 %。1 到位：SUCCEEDED（`reached_goal`）；2 夹住物体：SUCCEEDED 且 `stalled = true`；3 先受阻后到达，
   即运动中失去了物体：ABORTED；其他值同样 ABORTED。发出后 1.5 s 未见运动开始、或 30 s 未完成：ABORTED。
-  结果里的 `state.position` 为结束时的开度
-- **夹住之后不可观测**：标志位只在运动时限内更新，之后物体掉落、被取走，帧都照报 2（G13）；驱动没有别的传感器，
+  结果里的 `state.position` 为结束时的开度。目标为 0 % 时不做额外防护：若旧标志位和 0 % 开度持续超过 300 ms，
+  可能提前判定结束；这是已知局限，真机尚未观察到
+- **夹住之后不可观测**：标志位仅在命令的 `max_time` 内改变，超时后物体掉落、被取走，帧仍可报 2（G13）；驱动没有别的传感器，
   不报告"是否仍夹着"
 - **等待**：机械臂在动时目标等它停下，不限时（调用方可取消）
 - **一次一个目标**：新目标被接受时旧目标立即 ABORTED；旧目标已发出的运动走完后才发新目标（控制器不能打断夹爪运动，G15）
@@ -134,8 +135,8 @@ ros2 action send_goal /gripper_controller/gripper_cmd control_msgs/action/Parall
   下一条不同的命令先补 `prefill` 段原地不动的再续发，从静止起步多约 `prefill × cmdT`（24 ms）延迟（S18）
 - **夹爪目标等机械臂静止**：伺服流已停发且控制器队列为空时才发 `MoveGripper`；机械臂在动或同一周期要动时，
   目标等着
-- **夹爪忙时轨迹暂停**：从发出 `MoveGripper`（或激活）到状态帧报完成（`motion_done` 先 0 后非 0；1.5 s 内未见运动
-  开始按无需运动，最长 30 s），`speed_scaling_factor` 为 0，`joint_trajectory_controller` 的轨迹时间停住：
+- **夹爪忙时轨迹暂停（误用兜底）**：从发出 `MoveGripper`（或激活）到确认完成（标志位与开度稳定，见上文；1.5 s 内
+  未见运动开始或 30 s 未完成则目标 ABORTED 并放行机械臂），`speed_scaling_factor` 为 0，`joint_trajectory_controller` 的轨迹时间停住：
   其间收到的轨迹停在起点等待，夹爪完成后从原处继续并照常 SUCCEEDED，不触发路径容差，**硬件不停用**
   （`~/status` 的 `arm_commands = paused (gripper busy)`）。驱动也不把会让机械臂动的命令发给控制器（控制器在夹爪
   运动期间不执行 `ServoJ`，G9）；夹爪完成的那个周期起命令照常发出，只经单周期步长检查。`MoveGripper` 调用失败
@@ -143,24 +144,24 @@ ros2 action send_goal /gripper_controller/gripper_cmd control_msgs/action/Parall
   不认速度缩放的控制器（如 `forward_position_controller`）在夹爪运动期间照样往前走，夹爪完成后命令一步跳过去，
   被步长检查拒绝、保护停止：夹爪运动期间不要用它们命令机械臂。
 
-**使用约定**：机械臂与夹爪可以先后发出，不必等对方的 action 结束：夹爪运动中发来的轨迹会暂停到夹爪完成，
-机械臂运动中发来的夹爪命令等机械臂停下（见上）。MoveIt 的执行时长监控会把暂停的时间算进去，须相应放宽。
+**使用约定**：机械臂与夹爪顺序执行，等前一个 action 结束再发下一个；夹爪运动时不应有机械臂运动。轨迹暂停与夹爪
+等待只作误用时的兜底。MoveIt 的执行时长监控会把等待时间算进去，接入时须为夹爪控制器配置足够的时长。
 
 **命令与开度**：
 
 - 每个目标发一次 `MoveGripper`（`block = 1`；`block = 0` 不阻塞且会让夹爪失去激活、报故障，G11），
-  由后台线程用独立的 20003 连接发送；`read()`/`write()` 不碰网络。速度、力取自 goal 的 `velocity`/`effort`：
-  速度 % = m/s ÷ 0.00044（实测 vel 20 % ≈ 22 %行程/s，按线性外推），力 % = N ÷ 1.4（满量程 140 N），
-  都限制在 1–100；goal 未给时用 50 % 速度（0.022 m/s）、20 % 力（28 N，夹玻璃器皿），与 mock 的
-  `gripper_controller` 参数 `max_velocity`、`max_effort` 一致
+  由后台线程用独立的 20003 连接发送；`read()`/`write()` 不碰网络。PGI-140 的速度参数无效（G12），goal 的 `velocity`
+  被忽略，协议速度固定发 50 %，无 `max_velocity` 命令接口。力取自 goal 的 `effort`：力 % = N ÷ 1.4（满量程 140 N），
+  限制在 1–100；未给有效正数时用 20 %（28 N，夹玻璃器皿），与 mock 的 `gripper_controller.max_effort` 一致
 - 开度 = 状态帧的 `gripper_position` %（整数）× 0.04 m。控制器与夹爪之间通信慢：每次运动开始约 0.8 s 内帧报 0 %、
   未完成，之后约每 0.4 s 才更新一次（G10）；运动到当前开度时，完成后帧还会报 0 % 约 200 ms（G14）。帧报"0 %、未完成"时，
   以及目标不为 0 % 而发出后帧还没报过非 0 开度时，沿用上一个已知开度
   （`~/status` 的 `gripper_position_source = held_during_motion`）；激活后（必然全开）或驱动启动时还不知道开度，
   则报全开（`inferred_open_after_activation`）；其余为 `frame`。**未激活时**帧报 0 %，与手指实际位置无关，开度不可知：
   驱动报全开（外轮廓最大，碰撞检查偏保守；`unknown_not_active`），激活（必然张开到满行程）后即为真。
-  **上层不要把"报全开"当作实测开度**：判断是否夹住物体须看 `gripper_position_source` 是否为 `frame`
-- 速度 = 相邻两次开度变化之差 ÷ 间隔，0.6 s 无变化即 0
+  **上层不要把“报全开”当作实测开度**：`gripper_position_source = frame` 只表示开度来自状态帧，也不能证明物体仍被夹住
+- 夹爪速度状态恒报 0；帧更新稀疏，不估计速度。完成判定与开度推断由纯逻辑 `GripperMotion` 处理，
+  `test_gripper_motion` 回放真机帧序列；假控制器不模拟这些固件怪癖
 - 夹爪编号 `gripper_index`（launch 参数，默认 1）；编号 N 对应状态帧 `gripper_active` 的 bit N−1（G5）
 
 `~/status` 另有 `servo_stream`、`arm_commands`，以及 `gripper_active`、`gripper_fault`、`gripper_motion_done`、

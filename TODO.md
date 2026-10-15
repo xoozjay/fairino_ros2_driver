@@ -53,6 +53,9 @@
 
 ### 杂项
 
+- [ ] 夹爪 KISS 重构后的真机核对：[docs/plans/20261015-kiss-driver-tests.md](docs/plans/20261015-kiss-driver-tests.md)
+      —— done when: 操作者仅经夹爪 action 验证开、合、夹住、从 3 张开；机械臂不动，计划 done
+
 - [ ] 合入前收敛 `agent/dev`：[docs/plans/20261013-pre-merge-cleanup.md](docs/plans/20261013-pre-merge-cleanup.md)
       —— done when: 该计划 done、维护者合入
 - [ ] 夹爪不经运动队列控制（末端 485 `AxleSensorRegWrite` 或 Modbus 直连主机），让机械臂与夹爪真正同时动 —— done when: 真机验证可行性，再决定是否立计划

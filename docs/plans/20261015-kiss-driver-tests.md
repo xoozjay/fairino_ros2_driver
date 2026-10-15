@@ -1,6 +1,6 @@
 # 夹爪判定抽成纯逻辑、假控制器回归朴素、测试回放真机帧序列
 
-- Status: approved（维护者批准；目标 0 % 不补，开度速度恒报 0，暂停集成测试只留一个）
+- Status: approved（第 1–4 步完成；第 5 步真机核对待操作者，仅夹爪，机械臂不动）
 
 ## Goal
 
@@ -89,4 +89,41 @@ FK/KDL、XML-RPC 换库（合入后计划）。
 ## Result
 
 基线 `3fe1abe`：`scripts/check.sh` 通过，194 tests，0 errors，0 failures，4 skipped。
-第 1 步实施中。
+
+**第 1–4 步完成**，各步全量 check 通过：
+
+- 第 1 步 `509aa5b`：`GripperMotion` 接管运动结束、开度与来源推断，插件只喂帧与交出结果；开度速度恒报 0。
+  原有 194 tests 通过
+- 第 2 步 `319b405`：新增 13 项纯逻辑测试，约 2 ms，check 共 208 tests。R1–R7 来自黑盒日志与已记录的实测表；
+  原始时刻四舍五入到 ms，另补 300 ms 稳定期边界的断言，在两条变化记录之间逐 ms 重复上一帧。
+  R4 只回放帧顺序，不用有误的抽走时刻推断 `max_time`。正常夹住后 action 已结束，之后的 2 → 0 → 3 不产生第二个结果。
+  另以纯逻辑边界测试覆盖未开始、未完成、未知标志位、重新激活与重置，不等待真实超时
+- **测试有效性**：在临时目录逐一关闭 10 处条件（开始信号、非零标志、稳定期、位置可信性、位置变化重置计时、
+  忽略命令前开度、零位置保持、激活后丢弃旧开度、1.5 s 与 30 s 截止），对应测试全部失败；源码未改。
+  未新增目标 0 % 的防护或 H1 假设用例
+- 第 3 步 `1ac7674`：假控制器删除旧标志再现与延迟零位置的状态、开关、定时器；运动中保持开度，完成时直接报目标或物体位置；
+  激活后报全开。删除三项怪癖插件测试，`test_trajectory_pause` 只保留一个用例。check 共 203 tests，0 failures
+- 第 4 步 `b26d448`：goal 速度忽略，协议值固定 50；删除 `max_velocity` 命令接口与 mock 控制器的对应配置，力参数保持换算。
+  三处接口检查共用查找函数；README 写明速度状态恒 0、顺序执行、目标 0 % 的已知局限与时限后物体不可观测。
+  最终 `scripts/check.sh`：203 tests，0 errors，0 failures，4 skipped；纯逻辑测试 13 项。
+  mock 启动与开合验证使用的代码与最终树相同。
+
+**mock 管线**（独立 ROS domain、namespace 与 tf_prefix，使用安装后的 launch / xacro / controllers.yaml）：
+三个控制器 active；夹爪仅 position / max_effort 命令接口；指定 goal.velocity 后开到 0.04 m、合到 0 m 均 SUCCEEDED，
+`joint_states` 与目标一致；随后单独发机械臂轨迹 SUCCEEDED。验证进程已退出。
+
+| 文件 | 重构前行数 | 重构后行数 |
+|---|---:|---:|
+| `src/fr_robot_hardware_interface.cpp` | 1155 | 1062 |
+| `include/fr_robot_driver/fr_robot_hardware_interface.hpp` | 218 | 202 |
+| `include/fr_robot_driver/status_report.hpp` | 257 | 252 |
+| `include/fr_robot_driver/gripper_motion.hpp` | — | 116 |
+| `test/fake_controller.hpp` | 428 | 390 |
+| `test/test_hardware_interface.cpp` | 1243 | 1158 |
+| `test/test_trajectory_pause.cpp` | 261 | 219 |
+| `test/test_gripper_motion.cpp` | — | 261 |
+
+生产代码总行数基本持平；测试总行数增加，新增内容主要是带来源的帧表。简化的是状态归属与测试时序：插件的分散判定
+集中到一个纯逻辑对象，假控制器少了四个夹爪配置项及其定时分支，怪癖无需再经 socket、线程和墙钟模拟。
+
+**未完成**：第 5 步真机核对。未连接控制器或发真机指令；本计划保持 approved。此前已取消的 D1–D7 不恢复。
