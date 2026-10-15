@@ -95,6 +95,6 @@
   增长时延迟变大，直至 255 条满
 - **JTC 取消或中止轨迹时保持在实际位置**（上游 `set_hold_position()` 取 `state_current_`）：跟随滞后 116–133 ms（S19），
   命令一步跳回约"速度 × 滞后"，超过单周期步长上限（URDF 限速 × `cmdT`）即保护停止；约 12°/s 以上取消运动中的轨迹就会
-  触发 —— impact: MoveIt 停止、action 取消、路径容差中止都以保护停止收场；减少滞后或整条轨迹交给控制器执行时一并处理
+  触发 —— impact: MoveIt 停止、action 取消、路径容差中止都以保护停止收场；减少滞后（先从驱动自身的 `kLead`、`prefill` 约 48 ms 入手）或整条轨迹交给控制器执行时一并处理
 - **故障恢复全由操作者发起**，驱动绝不自动复位（[docs/fault_handling.md](docs/fault_handling.md)）
   —— impact: 无人值守时故障即停机

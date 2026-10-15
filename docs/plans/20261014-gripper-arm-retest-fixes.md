@@ -21,21 +21,20 @@ J6 ±30°）发现：夹住物体后机械臂与夹爪被锁 30 s；被中止的
 
 真机会话日志在会话机器的 `/tmp/session/`（不入库）；以下为关键数据。
 
-**E1 跟随滞后 118 ms，为常数**。J6 余弦轨迹，`joint_trajectory_controller/controller_state` 的 reference 与
+**E1 跟随滞后约 118 ms，不随速度变化**（维护者更正 2026-10-15：这个常数既有网络与固件的份额，也有本驱动自己的份额——主机端 `kLead` 3 条与固件队列 `prefill` 3 条共约 48 ms 都是驱动的设定）。J6 余弦轨迹，`joint_trajectory_controller/controller_state` 的 reference 与
 feedback 互相关：30°/s 最大误差 3.7°、60°/s 7.4°、90°/s 11.1°，滞后均为 116–121 ms（含 +2°/4 s、+10°/5 s 的慢轨迹）。
 `controllers.yaml:44-45` 的路径容差 0.26 rad 按"prefill × cmdT + 往返，约 40 ms"算出，此值从未实测。按 118 ms，
 0.26 rad 在约 126°/s 以上误报 ABORTED；误报后 JTC 保持在实际位置，命令一步跳回约 15°，单周期步长检查拒绝 →
-高速中保护停止。未在真机上跑 > 90°/s。滞后的组成未知：已知部分为主机端 `kLead` 3 条（24 ms）与固件队列
-`prefill` 3 条（24 ms），其余约 70 ms 待测。
+高速中保护停止。未在真机上跑 > 90°/s。滞后的组成：驱动自身——主机端 `kLead` 3 条（24 ms）与固件队列
+`prefill` 3 条（24 ms）；网络与固件——XML-RPC 往返、控制器插补与总线、伺服与机械响应、状态帧采样，其余约 70 ms 未拆分。
 
-**E2 小幅慢速轨迹撞上夹爪运动 → 保护停止**。夹爪 100 → 50 % 期间发 J6 +2°/4 s：被扣住；参考只偏 2°，到不了路径容差；
+**E2 夹爪运动中发机械臂轨迹 → 保护停止**（维护者 2026-10-15：夹爪运动时不应有机械臂运动；这是上层的误用，驱动只需兜底，不让本体停机）。夹爪 100 → 50 % 期间发 J6 +2°/4 s：被扣住；参考只偏 2°，到不了路径容差；
 夹爪结束后 2 s 内命令未回到停住位置 → `HoldTimeout` 保护停止（`fr_robot_hardware_interface.cpp:790`）。
 夹爪计划 Result 中同一操作的记录（goal_time 中止，之后同一轨迹成功）不再成立。大幅轨迹（0 → +30°，30°/s）则按设计
 因路径容差 ABORTED、放行，无保护停止。
 
 **E3 夹住物体时 `gripper_motiondone = 2`**。夹爪 50 % 处放物体后命令 0：位置 50 → 45 → 23 → 7 %，帧报 `motion_done = 2`
-并保持。SDK 文档只写 0/1（`references/fr_documentation/source/SDKManual/CPPDataStructure.rst:204`）；大寰 PGI 自身的
-夹持状态寄存器为 0 运动中 / 1 到位 / 2 夹住物体 / 3 物体掉落，推测控制器原样转发（🔍 3 未见）。驱动只认 1 为完成
+并保持。SDK 文档只写 0/1（`references/fr_documentation/source/SDKManual/CPPDataStructure.rst:204`）。**寄存器状态位**（维护者结论 2026-10-15，sdk_quirks G13）：两个标志位，**0x02 卡住**（运动中受阻）、**0x01 到达**（到目标）；新命令开始时清零，**只在命令期间（运动时限内）改变**，之后保持不变。故 0 = 运动中，1 = 到达，2 = 卡住（夹着物体停下），3 = 先卡住、后到达（运动中物体被抽走）。时限过后物体掉落，状态位不变，不可观测。驱动只认 1 为完成
 （`fr_robot_hardware_interface.cpp:872-874`），于是 `gripper_busy` 保持到 30 s 超时：期间机械臂命令被扣、新的夹爪
 命令（含张开）也不发；张开目标因 `stall_timeout` 2 s ABORTED。
 
