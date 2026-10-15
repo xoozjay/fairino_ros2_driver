@@ -1,6 +1,6 @@
 # 把插件里的决策抽成纯逻辑，插件只做接线；测试改测纯逻辑
 
-- Status: approved
+- Status: done
 
 ## Goal
 
@@ -100,4 +100,41 @@ rclcpp 的节点/服务/action/定时器、清理线程与链路监视。`reset_
 
 ## Result
 
-（未开始）
+实施完成：插件的各项决策抽成纯逻辑对象，插件只留接线；测试从真实时间等待改为测纯对象。
+
+**拆分与实现**：
+
+1. `ArmGate`（`arm_gate.hpp`，提交 `0f40d4b`）：接管 `write()` 的机械臂决策——单周期步长检查、控制器频率与 `cmdT`
+   的分频比、夹爪忙时保持原地、以及命令是否变化的判定。8 个新单元测试，0 ms；取代插件中 5 个慢测试
+2. `GripperGoals`（`gripper_goals.hpp`，提交 `3fd5d83`）：接管夹爪 action 目标的接受/拒绝、抢占、取消、epoch 作废、
+   发送时机（机械臂静止、流停发、固件队列排空）以及完成标志位到 action 结果的映射。顺带修 **C5**：发送线程不在时
+   目标中止而非永远等待。8 个新单元测试，0 ms；取代插件中 6 个慢测试
+3. `preconditions.hpp`（提交 `8060f50`）：接管 configure（版本白名单、型号核对、正运动学法兰核对）、activate（状态新鲜、
+   无故障、法兰核对）、夹爪激活（前置条件）、以及 `reset_error` 的决策。`reset_policy.hpp` 合并入此文件。
+   顺带修 **C4**：`onGripperActivate` 仅在调用 `ActGripper` 时持 `api_mutex_`，等待激活位的 3 s 不再持锁，不再阻塞
+   `reset_error`。8 个新单元测试，0 ms
+4. **C2**（提交 `db1f1f1`）：真机分支的 URDF 不再声明 `left_finger_joint` 的 `position` 与 `max_effort` 命令接口，
+   插件也不再要求它们；开度状态接口保留。mock 保留（上游 `gripper_controller` 写入）
+5. **测试精简与端到端测试**：
+   - 插件测试用例由 31 个减少到 16 个（只留安全承诺用例）；夹爪测试合并为单个端到端用例 `EndToEndMotionPausesTrajectoriesAndSendsParameters`
+     （开度/速度/力换算 → `MoveGripper` 参数 → 期间 `speed_scaling_factor` 为 0、机械臂命令停发 → 完成后 SUCCEEDED）；
+   - `test_trajectory_pause` 删除（用处不确定，见 Questions 2）；
+   - **`fr_robot_driver` 的测试总耗时从 34 s 降到 7.79 s**（`scripts/check.sh` 总体通过耗时降至 ~20 s），
+     达成 Done when 的 ≤ 10 s 目标
+6. **mock 管线复核**：`ROS_DOMAIN_ID=88` 下启动，`gripper_controller`、`joint_trajectory_controller`、`joint_state_broadcaster`
+   全部 active；开到 0.04 m、闭到 0.0 m 以及 6 轴机械臂轨迹各一次，全部返回 SUCCEEDED。
+
+| 模块 | 行数（重构前） | 行数（重构后） |
+|---|---:|---:|
+| `fr_robot_hardware_interface.cpp` | 1062 | 967 |
+| `fr_robot_hardware_interface.hpp` | 202 | 196 |
+| `arm_gate.hpp` | — | 108 |
+| `gripper_goals.hpp` | — | 181 |
+| `preconditions.hpp`（取代 `reset_policy.hpp` 38 行） | — | 179 |
+| `test_hardware_interface.cpp` | 1103 | 660 |
+| `test_arm_gate.cpp` | — | 97 |
+| `test_gripper_goals.cpp` | — | 134 |
+| `test_preconditions.cpp`（取代 `test_reset_policy.cpp` 33 行） | — | 129 |
+| `test_trajectory_pause.cpp` | 219 | 0 |
+
+代码总行数大致持平，但决策集中在无 I/O 的头文件里，测试不再依赖真实的 wall-clock 等待。

@@ -44,13 +44,10 @@
 
 ### 代码与测试
 
-- [ ] 真机分支要求夹爪关节声明 `position`、`max_effort` 命令接口，插件从不读取（action 由插件直接提供）—— done when: 随插件重构删除或接上
-- [ ] `~/gripper/activate` 持 `api_mutex_` 最多 3 s，期间 `reset_error` 与同在默认回调组的状态定时器、夹爪目标定时器停住 —— done when: 随插件重构
-- [ ] 夹爪发送线程异常退出后 `post()` 恒为 false，已接受的夹爪目标永远等待、不中止 —— done when: 线程不在时目标 ABORTED
 - [ ] `fr_control.launch.py` 用 `1000 // cmd_t_ms` 算频率，`cmd_t_ms` 不整除 1000 时插件拒绝且报错指向 `update_rate_hz` —— done when: launch 直接校验
 - [ ] 临时文件名会冲突：launch 的控制器 yaml 只按 `tf_prefix` 命名，`test_trajectory_pause` 写固定 `/tmp/<ns>_controllers.yaml` —— done when: 用唯一文件名
-- [ ] 测试精简：插件里的夹爪用例经真 socket 与墙钟（`test_hardware_interface` 占 check 约 36 s）；自写 HTTP/XML-RPC 的测试随换库删除；
-      `test_robot_state.cpp` 与头文件 `static_assert` 重复；`test_srdf` 只验证能解析，抓不到 launch 配置错误 —— done when: 随插件重构与换库完成
+- [ ] 测试精简：自写 HTTP/XML-RPC 的测试随换库删除；`test_robot_state.cpp` 与头文件 `static_assert` 重复；
+      `test_srdf` 只验证能解析，抓不到 launch 配置错误 —— done when: 随换库完成
 
 ### 杂项
 

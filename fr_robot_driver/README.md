@@ -244,8 +244,14 @@ rviz2 -d $(ros2 pkg prefix fr_robot_driver)/share/fr_robot_driver/rviz/dual_cell
 ```
 urdf/fr_controlled.urdf.xacro       顶层：fr_description 宏 + 可选夹爪宏 + fr_ros2_control 宏
 urdf/fr_ros2_control.xacro          <ros2_control> 生成宏（joint 名带 tf_prefix；mock 与真机同名 fr_status、speed_scaling gpio）
-src/ include/ fr_robot_driver.xml   硬件插件 FrRobotHardwareInterface（+ reset_policy.hpp）
-test/                              插件状态机测试（假控制器 + ResourceManager）
+src/ include/ fr_robot_driver.xml   硬件插件 FrRobotHardwareInterface
+include/fr_robot_driver/arm_gate.hpp         机械臂命令的放行规则（步长、周期、夹爪忙时保持），纯逻辑
+include/fr_robot_driver/gripper_goals.hpp    夹爪 action 的接受/抢占/取消与结果映射，纯逻辑
+include/fr_robot_driver/gripper_motion.hpp   夹爪完成判定与开度推断，纯逻辑
+include/fr_robot_driver/kinematics.hpp       configure/activate 的正运动学核对
+include/fr_robot_driver/preconditions.hpp   configure、activate、夹爪激活、reset 的前置条件，纯逻辑
+include/fr_robot_driver/status_report.hpp    ~/status 的内容与变化判定，纯逻辑
+test/                              插件状态机测试（假控制器 + ResourceManager）+ 上述纯逻辑的单元测试
 urdf/table_cell.urdf.xacro          工作台静态场景（world + 台面）
 config/controllers.yaml             控制器配置（令牌模板）
 config/initial_positions.yaml       单机初始位形

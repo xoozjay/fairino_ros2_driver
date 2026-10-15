@@ -241,101 +241,6 @@ TEST(HardwareInterface, ActivationStartsAtTheActualPositionAndStreamsCommands)
   EXPECT_NEAR(sent.back()[0], 12.5 + 0.001 * 19 / kDeg * 1.0, 0.1);   // and the stream follows the command
 }
 
-TEST(HardwareInterface, UnverifiedSoftwareVersionIsRefusedUnlessAllowed)
-{
-  {
-    Rig r;
-    r.fake.setVersion("v3.8.5");             // known frame size, but not verified
-    EXPECT_FALSE(r.configure());
-    EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_UNCONFIGURED);
-  }
-  {
-    Rig r("<param name=\"allow_unverified_version\">true</param>");
-    r.fake.setVersion("v3.8.5");
-    EXPECT_TRUE(r.configure());
-  }
-  {
-    Rig r("<param name=\"allow_unverified_version\">true</param>");
-    r.fake.setVersion("v3.9.9");             // no state frame size known: refused even so
-    EXPECT_FALSE(r.configure());
-  }
-  {
-    Rig r;
-    r.fake.setVersion("V3.8.8-LA");          // the vendor's controller string is not a software version
-    EXPECT_FALSE(r.configure());
-  }
-}
-
-// ---- robot model and flange (forward kinematics) checks ----
-
-TEST(HardwareInterface, AControllerOfAnotherModelIsRefused)
-{
-  Rig r;                                     // the URDF is for fairino5_v6
-  r.fake.setModel("FR20-V1-001(V6.0)");      // a known model, but not this one
-  EXPECT_FALSE(r.configure());
-  EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_UNCONFIGURED);
-  EXPECT_EQ(r.fake.count("SetRobotRealtimeStateSamplePeriod"), 0);   // refused before touching anything
-}
-
-TEST(HardwareInterface, AnUnknownModelNeedsExplicitPermission)
-{
-  {
-    Rig r;
-    r.fake.setModel("FR5-V1-001(V5.0)");     // the V5.0 generation: no kinematics for it here
-    EXPECT_FALSE(r.configure());
-  }
-  {
-    Rig r("<param name=\"allow_unknown_model\">true</param>");
-    r.fake.setModel("FR5-V1-001(V5.0)");
-    EXPECT_TRUE(r.configure());              // the flange check still guards it
-  }
-  {
-    Rig r("<param name=\"allow_unknown_model\">true</param>");
-    r.fake.setModel("FR5-V1-001(V5.0)");
-    r.fake.flange_error_mm = 80;
-    EXPECT_FALSE(r.configure());             // allowed to be unknown, not allowed to disagree
-  }
-}
-
-TEST(HardwareInterface, AFlangePoseThatDisagreesWithTheKinematicsIsRefused)
-{
-  {
-    Rig r;
-    r.fake.flange_error_mm = 50;             // e.g. wrong zero offsets or installation
-    EXPECT_FALSE(r.configure());
-    EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_UNCONFIGURED);
-  }
-  {
-    Rig r;
-    r.fake.flange_error_mm = 9;              // inside the default 10 mm
-    EXPECT_TRUE(r.configure());
-  }
-  {
-    Rig r("<param name=\"fk_check\">false</param>");
-    r.fake.flange_error_mm = 500;
-    EXPECT_TRUE(r.configure());              // can be switched off
-  }
-  {
-    Rig r("<param name=\"fk_position_tolerance_mm\">100</param>");
-    r.fake.flange_error_mm = 50;
-    EXPECT_TRUE(r.configure());              // or loosened
-  }
-}
-
-TEST(HardwareInterface, ActivationChecksTheFlangeAgain)
-{
-  Rig r;
-  ASSERT_TRUE(r.configure());
-  r.run(3);
-  r.fake.flange_error_mm = 50;               // e.g. the robot was re-installed meanwhile
-  r.run(3);
-  EXPECT_FALSE(r.activate());
-  EXPECT_EQ(r.fake.count("ServoMoveStart"), 0);
-  r.fake.flange_error_mm = 0;
-  r.run(3);
-  EXPECT_TRUE(r.activate());
-}
-
 TEST(HardwareInterface, ActivationIsRefusedWhileAFaultIsPresent)
 {
   const std::vector<std::pair<const char *, std::function<void(fr_client_library::RobotState384 &)>>> cases = {
@@ -499,38 +404,6 @@ TEST(HardwareInterface, StepCheckRefusesAJumpAndTheFirmwareNeverSeesIt)
   EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_INACTIVE);
 }
 
-TEST(HardwareInterface, ASmoothRampWithinTheLimitIsAccepted)
-{
-  Rig r;
-  ASSERT_TRUE(r.configure());
-  ASSERT_TRUE(r.activate());
-  auto cmd = r.rm->claim_command_interface(kPan);
-  for (int i = 1; i <= 100; ++i) {                  // 1 deg per step: within the 1.44 deg limit
-    ASSERT_NE(r.cycle([&] {(void)cmd.set_value(i * kDeg);}).result, return_type::DEACTIVATE) << i;
-  }
-  EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_ACTIVE);
-  // the sender runs a few segments behind the producer (the resampling lead)
-  for (int i = 0; i < 100 && std::abs(r.fake.servoJ().back()[0] - 100.0) > 1e-6; ++i) {
-    std::this_thread::sleep_for(10ms);
-  }
-  EXPECT_NEAR(r.fake.servoJ().back()[0], 100.0, 1e-6);
-}
-
-TEST(HardwareInterface, ControllerFasterThanCmdTSendsEveryRatioThCycle)
-{
-  Rig r("", 500);                                   // 500 Hz controller, cmdT 8 ms: one segment per 4 cycles
-  ASSERT_TRUE(r.configure());
-  ASSERT_TRUE(r.activate());
-  auto cmd = r.rm->claim_command_interface(kPan);
-  const auto base = r.fake.servoJ().size();         // the prefill
-  for (int i = 1; i <= 400; ++i) {                  // 0.8 s of a slow ramp (a standing arm pauses)
-    r.cycle([&] {(void)cmd.set_value(i * 0.0001);});
-  }
-  const auto sent = r.fake.servoJ().size() - base;
-  EXPECT_GE(sent, 85u);
-  EXPECT_LE(sent, 105u);                            // ~100, not 400
-}
-
 TEST(HardwareInterface, DeactivationFlushesTheFirmwareQueueWithStop)
 {
   Rig r;
@@ -663,35 +536,57 @@ TEST(Gripper, MockDescriptionHasTheFingerJoint)
   EXPECT_TRUE(rm.state_interface_exists(kScaling));
   EXPECT_FALSE(rm.state_interface_exists("right_finger_joint/position"));   // a mimic joint: TF only
   EXPECT_NE(params.robot_description.find("<parent link=\"tool0\"/>"), std::string::npos);
+
+  // Real hardware: the plugin serves the action itself, so the opening's command interfaces are
+  // not declared (and the plugin does not require them any more).
+  hardware_interface::ResourceManagerParams real;
+  real.robot_description = xacro(std::string(kWithGripper) + " use_mock_hardware:=false");
+  real.clock = std::make_shared<rclcpp::Clock>(RCL_STEADY_TIME);
+  real.logger = rclcpp::get_logger("test");
+  hardware_interface::ResourceManager real_rm(real, true);
+  for (const auto & c : kGripperCommands) {
+    EXPECT_FALSE(real_rm.command_interface_exists(c)) << c;
+  }
+  EXPECT_TRUE(real_rm.state_interface_exists(kFinger));
+  EXPECT_TRUE(real_rm.state_interface_exists("left_finger_joint/velocity"));
 }
 
-TEST(Gripper, GoalsSendPositionAndForceAndIgnoreVelocity)
+TEST(Gripper, EndToEndMotionPausesTrajectoriesAndSendsParameters)
 {
   Rig r("", 125, kWithGripper);
+  r.fake.gripper_motion_ms = 300;
   startWithGripperAt(r, 30);
   EXPECT_NEAR(r.state(kFinger), 0.012, 1e-9);        // 30 % of the 0.04 m stroke
   GripperClient c(r);
+  auto pan = r.rm->claim_command_interface(kPan);
 
-  auto h = c.send(0.02);                             // no velocity, no effort given
+  // Send a goal with velocity and effort: velocity is ignored (G12), effort is converted.
+  auto h = c.send(0.02, 0.011, 14.0);
   ASSERT_TRUE(h);
-  auto res = c.result(h);
+  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 1;}));
+
+  // MoveGripper parameters: opening %, protocol velocity 50, force from 14 N, max_time 30000 ms.
+  EXPECT_EQ(r.fake.params("MoveGripper").back(), (std::vector<double>{1, 50, 50, 10, 30000, 1, 0, 0, 0, 0}));
+  EXPECT_EQ(r.fake.count("ActGripper"), 0);         // never activated by the driver
+
+  // While the gripper moves: speed scaling is 0, trajectories pause, arm commands are not sent.
+  const auto before = r.fake.servoJ().size();
+  for (int i = 0; i < 10; ++i) {
+    r.cycle([&] {(void)pan.set_value(0.24 * kDeg);});
+  }
+  EXPECT_EQ(r.fake.servoJ().size(), before);
+  EXPECT_EQ(r.state(kScaling), 0.0);
+  EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_ACTIVE);
+
+  // Once the gripper finishes: speed scaling is 1, the goal succeeds with reached_goal.
+  auto res = c.result(h, 100);
   ASSERT_TRUE(res);
   EXPECT_EQ(res->code, GripperClient::Code::SUCCEEDED);
   EXPECT_TRUE(res->result->reached_goal);
   EXPECT_FALSE(res->result->stalled);
   EXPECT_NEAR(res->result->state.position.at(0), 0.02, 1e-9);
-  EXPECT_DOUBLE_EQ(r.state("left_finger_joint/velocity"), 0.0);
-  EXPECT_EQ(r.fake.params("MoveGripper").at(0), kMove50);  // 50 % opening, fixed 50 % speed, 20 % force
-
-  h = c.send(0.02, 0.011, 14.0);                    // a velocity is given; it is ignored (G12)
-  ASSERT_TRUE(h);
-  ASSERT_TRUE(c.result(h));
-  // opening %, the fixed protocol speed 50, the force from 14 N, the SDK's max_time and flags
-  EXPECT_EQ(r.fake.params("MoveGripper").back(), (std::vector<double>{1, 50, 50, 10, 30000, 1, 0, 0, 0, 0}));
-  EXPECT_EQ(r.fake.count("ActGripper"), 0);         // never activated by the driver
-  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "gripper_motion_done") == "1";}));
-  EXPECT_EQ(Rig::value(r.status(), "gripper_commands"), "<missing>");
-  EXPECT_EQ(Rig::value(r.status(), "gripper_object"), "<missing>");   // not observable (G13)
+  EXPECT_EQ(r.state(kScaling), 1.0);
+  EXPECT_EQ(r.fake.servoj_while_gripper_moves, 0);
 }
 
 TEST(Gripper, ActivationOnlyOnRequestAndOnlyOnce)
@@ -765,99 +660,6 @@ TEST(HardwareInterface, TheStreamPausesWhileTheArmStandsAndResumesWithAPrefill)
 }
 
 
-TEST(Gripper, TrajectoriesPauseWhileTheGripperIsBusy)
-{
-  {
-    Rig plain;                                       // no gripper: never paused
-    ASSERT_TRUE(plain.configure());
-    ASSERT_TRUE(plain.activate());
-    plain.run(3);
-    EXPECT_EQ(plain.state(kScaling), 1.0);
-  }
-  Rig r("", 125, kWithGripper);
-  r.fake.gripper_activation_ms = 300;
-  r.fake.gripper_motion_ms = 300;
-  ASSERT_TRUE(r.configure());
-  ASSERT_TRUE(r.activate());
-  r.run(3);
-  EXPECT_EQ(r.state(kScaling), 1.0);
-
-  // the operator's activation moves the gripper too (it opens fully)
-  auto activation = std::async(std::launch::async, [&] {return r.trigger("gripper/activate");});
-  EXPECT_TRUE(cycleUntil(r, [&] {return r.state(kScaling) == 0.0;}));
-  while (activation.wait_for(0s) != std::future_status::ready) {r.cycle();}
-  ASSERT_TRUE(activation.get().first);
-  r.cycle();
-  EXPECT_EQ(r.state(kScaling), 1.0);
-
-  GripperClient c(r);
-  ASSERT_TRUE(c.send(0.02));
-  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 1;}));
-  r.cycle();
-  EXPECT_EQ(r.state(kScaling), 0.0);                 // from the MoveGripper...
-  ASSERT_TRUE(cycleUntil(r, [&] {return r.state(kScaling) == 1.0;}));
-  EXPECT_NEAR(r.state(kFinger), 0.02, 1e-9);         // ...until the frame shows it done
-}
-
-TEST(Gripper, AnArmCommandWaitsWhileTheGripperMovesAndGoesOnRightAfter)
-{
-  Rig r("", 125, kWithGripper);
-  r.fake.gripper_motion_ms = 600;
-  startWithGripperAt(r, 100);
-  GripperClient c(r);
-  auto pan = r.rm->claim_command_interface(kPan);
-  ASSERT_TRUE(c.send(0.02));
-  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 1;}));
-  const auto before = r.fake.servoJ().size();
-  // A trajectory starts while the gripper moves. The paused trajectory controller holds its first
-  // step: 0.24 deg, one 8 ms cycle at 30 deg/s.
-  for (int i = 0; i < 20; ++i) {
-    r.cycle([&] {(void)pan.set_value(0.24 * kDeg);});
-  }
-  EXPECT_EQ(r.fake.servoJ().size(), before);         // the arm stays: nothing went out
-  ASSERT_TRUE(r.waitStatus([](const auto & s) {
-      return Rig::value(s, "arm_commands") == "paused (gripper busy)";}));
-  EXPECT_EQ(r.state(kScaling), 0.0);
-  EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_ACTIVE);
-
-  // the gripper is done: the trajectory goes on from where it waited, at once
-  ASSERT_TRUE(cycleUntil(r, [&] {return r.state(kScaling) == 1.0;}, 200));
-  for (int i = 2; i <= 21; ++i) {
-    r.cycle([&] {(void)pan.set_value(i * 0.24 * kDeg);});
-  }
-  ASSERT_TRUE(cycleUntil(r, [&] {return std::abs(r.fake.servoJ().back()[0] - 21 * 0.24) < 1e-6;}));
-  EXPECT_GT(r.fake.servoJ().size(), before + 15);
-  EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_ACTIVE);
-  EXPECT_EQ(r.state("fr_status/fault_class"), 0.0);
-  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "arm_commands") == "accepted";}));
-  EXPECT_EQ(r.fake.servoj_while_gripper_moves, 0);
-  EXPECT_EQ(r.fake.move_gripper_while_streaming, 0);
-}
-
-TEST(Gripper, AControllerThatIgnoresThePauseEndsInTheStepCheck)
-{
-  Rig r("", 125, kWithGripper);
-  r.fake.gripper_motion_ms = 300;
-  startWithGripperAt(r, 100);
-  GripperClient c(r);
-  auto pan = r.rm->claim_command_interface(kPan);
-  ASSERT_TRUE(c.send(0.02));
-  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 1;}));
-  const auto before = r.fake.servoJ().size();
-  for (int i = 1; i <= 20; ++i) {                    // runs on while the gripper moves: 10 deg away
-    r.cycle([&] {(void)pan.set_value(i * 0.5 * kDeg);});
-  }
-  bool deactivated = false;
-  for (int i = 0; i < 200 && !deactivated; ++i) {
-    deactivated = r.cycle().result == return_type::DEACTIVATE;
-  }
-  ASSERT_TRUE(deactivated);                          // the jump is refused once the gripper is done
-  EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_INACTIVE);
-  EXPECT_EQ(r.fake.servoJ().size(), before);
-  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "fault_class") == "1";}));
-  EXPECT_NE(r.status().message.find("step check"), std::string::npos) << r.status().message;
-  EXPECT_EQ(r.fake.servoj_while_gripper_moves, 0);
-}
 
 int main(int argc, char ** argv)
 {

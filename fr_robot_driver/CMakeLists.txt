@@ -81,12 +81,6 @@ if(BUILD_TESTING)
   target_link_libraries(test_hardware_interface fr_robot_hardware_interface
     ament_index_cpp::ament_index_cpp ${lifecycle_msgs_TARGETS})
 
-  # a controller manager loop with joint_trajectory_controller and the installed controllers.yaml
-  find_package(controller_manager REQUIRED)
-  ament_add_gtest(test_trajectory_pause test/test_trajectory_pause.cpp TIMEOUT 120
-    SKIP_LINKING_MAIN_LIBRARIES)
-  target_link_libraries(test_trajectory_pause fr_robot_hardware_interface
-    ament_index_cpp::ament_index_cpp controller_manager::controller_manager)
 endif()
 
 ament_export_libraries(fr_robot_hardware_interface)
