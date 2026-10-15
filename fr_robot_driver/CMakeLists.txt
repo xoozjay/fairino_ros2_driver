@@ -2,11 +2,13 @@ cmake_minimum_required(VERSION 3.8)
 project(fr_robot_driver)
 
 find_package(ament_cmake REQUIRED)
+find_package(control_msgs REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
 find_package(fr_client_library REQUIRED)
 find_package(hardware_interface REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(std_srvs REQUIRED)
 
@@ -17,11 +19,13 @@ target_include_directories(fr_robot_hardware_interface PUBLIC
 target_compile_features(fr_robot_hardware_interface PUBLIC cxx_std_17)
 target_compile_options(fr_robot_hardware_interface PRIVATE -Wall -Wextra -Wpedantic -Werror)
 target_link_libraries(fr_robot_hardware_interface PUBLIC
+  ${control_msgs_TARGETS}
   ${diagnostic_msgs_TARGETS}
   fr_client_library::fr_client_library
   hardware_interface::hardware_interface
   pluginlib::pluginlib
   rclcpp::rclcpp
+  rclcpp_action::rclcpp_action
   rclcpp_lifecycle::rclcpp_lifecycle
   ${std_srvs_TARGETS})
 pluginlib_export_plugin_description_file(hardware_interface fr_robot_driver.xml)

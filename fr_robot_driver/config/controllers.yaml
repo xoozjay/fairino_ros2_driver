@@ -54,7 +54,8 @@ controller_manager:
       __PREFIX__wrist_2_joint: {trajectory: 0.26, goal: 0.005}
       __PREFIX__wrist_3_joint: {trajectory: 0.26, goal: 0.005}
 
-# Spawned only with gripper:=pgi140 (fr_control.launch.py). Opening = travel of one jaw, 0 (closed)
+# Mock only, with gripper:=pgi140 (fr_control.launch.py); real hardware provides the same action
+# from the plugin. Opening = travel of one jaw, 0 (closed)
 # to 0.04 m (open). A goal without velocity/effort gets max_velocity/max_effort: 50 % speed and
 # 20 % force of the PGI-140 (0.00044 m/s and 1.4 N per percent, see fr_robot_driver/README.md).
 "__NS__/gripper_controller":

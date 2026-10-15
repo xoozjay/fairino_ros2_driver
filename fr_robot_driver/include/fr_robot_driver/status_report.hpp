@@ -101,7 +101,6 @@ struct GripperStatusInput
   bool present = false;
   int index = 1;                  // the controller's gripper number; its active bit is index - 1
   GripperSource source = GripperSource::Frame;
-  bool armed = false;             // gripper_controller's commands are passed on
   bool busy = false;              // moving or activating: the arm is kept still, trajectories pause
   uint64_t command_failures = 0;  // MoveGripper calls that failed
 };
@@ -217,7 +216,9 @@ public:
       add("gripper_fault", frame(std::to_string(f.gripper_fault)));
       add("gripper_motion_done", frame(std::to_string(f.gripper_motiondone)));
       add("gripper_position_source", toString(g.source));
-      add("gripper_commands", g.armed ? "armed" : "not armed");
+      // the frame's motion_done after a grasp (sdk_quirks G13): 2 holds an object, 3 dropped it
+      add("gripper_object", frame(f.gripper_motiondone == 2 ? "held" :
+        f.gripper_motiondone == 3 ? "dropped" : "none"));
       add("gripper_busy", g.busy ? "1" : "0");
       add("gripper_command_failures", std::to_string(g.command_failures));
     }

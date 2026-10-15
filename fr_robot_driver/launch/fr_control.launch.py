@@ -144,10 +144,10 @@ def launch_setup(context, *args, **kwargs):
         arguments=['joint_trajectory_controller', '--param-file', processed_file],
     )
 
-    # Real hardware passes the gripper controller's commands on only if it started while the gripper
-    # was usable: after the operator's activation (~/gripper/activate) restart it; see the README.
+    # The gripper action: the mock's parallel_gripper_action_controller; on real hardware the plugin
+    # provides it under the same name and type (it knows when a grasp ends), see the README.
     commanding = [jtc]
-    if gripper != 'none':
+    if gripper != 'none' and mock:
         commanding.append(Node(
             package='controller_manager',
             executable='spawner',

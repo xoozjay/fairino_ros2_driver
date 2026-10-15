@@ -13,6 +13,7 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <depend>control_msgs</depend>
   <depend>controller_manager</depend>
   <depend>diagnostic_msgs</depend>
   <depend>fr_client_library</depend>
@@ -20,6 +21,7 @@
   <depend>hardware_interface</depend>
   <depend>pluginlib</depend>
   <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
   <depend>rclcpp_lifecycle</depend>
   <depend>std_srvs</depend>
   <depend>xacro</depend>

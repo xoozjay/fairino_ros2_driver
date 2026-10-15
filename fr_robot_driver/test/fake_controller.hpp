@@ -128,6 +128,9 @@ public:
   std::atomic<int> gripper_activation_ms{200};
   std::atomic<int> move_gripper_delay_ms{0};
   std::atomic<int> gripper_motion_ms{150};
+  // An object between the fingers at this opening [%] (-1: none): closing past it stops there and
+  // the frame says "done = 2" (grasped, sdk_quirks G13). A test sets done = 3 (dropped) by edit().
+  std::atomic<int> gripper_object_at{-1};
   // The servo queue: every ServoJ is one 8 ms segment, played in turn; the frame's mc_queue_len is
   // what is left (plus whatever a test sets). What a real controller would hold back: MoveGripper
   // while segments are left (G8), and ServoJ while the gripper moves (G9). Tests expect both 0.
@@ -300,8 +303,10 @@ private:
             gripper_activates_at_.reset();
           }
           if (gripper_arrives_at_ && std::chrono::steady_clock::now() >= *gripper_arrives_at_) {
-            st_.gripper_position = gripper_target_;
-            st_.gripper_motiondone = 1;
+            const int object = gripper_object_at.load();
+            const bool grasped = object >= 0 && gripper_target_ < object;
+            st_.gripper_position = grasped ? static_cast<uint8_t>(object) : gripper_target_;
+            st_.gripper_motiondone = grasped ? 2 : 1;
             gripper_arrives_at_.reset();
           }
           s = st_;

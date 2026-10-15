@@ -21,11 +21,13 @@
 #include "fr_client_library/robot_model.hpp"
 #include "fr_client_library/servo_sender.hpp"
 #include "fr_client_library/state_receiver.hpp"
+#include "control_msgs/action/parallel_gripper_command.hpp"
 #include "diagnostic_msgs/msg/diagnostic_status.hpp"
 #include "fr_robot_driver/kinematics.hpp"
 #include "fr_robot_driver/status_report.hpp"
 #include "hardware_interface/system_interface.hpp"
 #include "rclcpp/rclcpp.hpp"
+#include "rclcpp_action/rclcpp_action.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
 namespace fr_robot_driver
@@ -49,11 +51,6 @@ public:
     const rclcpp::Time & time, const rclcpp::Duration & period) override;
   hardware_interface::return_type write(
     const rclcpp::Time & time, const rclcpp::Duration & period) override;
-  // Runs on the realtime thread between cycles, when a controller starts or stops claiming our
-  // command interfaces: arms and disarms the gripper commands.
-  hardware_interface::return_type perform_command_mode_switch(
-    const std::vector<std::string> & start_interfaces,
-    const std::vector<std::string> & stop_interfaces) override;
 
 private:
   using JointArray = fr_client_library::JointArray;
@@ -87,7 +84,6 @@ private:
   double gripperOpening(const fr_client_library::RobotState384 & s, GripperSource & source) const;
   void readGripper(const fr_client_library::StateSnapshot & snap, fr_client_library::FaultClass fc);
   void writeGripper(bool arm_moves);
-  void disarmGripper(const char * why);  // realtime thread; why == nullptr: quietly
   void onGripperActivate(
     const std::shared_ptr<std_srvs::srv::Trigger::Request>,
     std::shared_ptr<std_srvs::srv::Trigger::Response> response);
@@ -148,10 +144,6 @@ private:
   std::string gripper_joint_;
   int gripper_index_ = 1;
   std::unique_ptr<fr_client_library::GripperSender> gripper_sender_;
-  // Commands are passed on only while armed: gripper_controller started claiming the opening
-  // while the gripper was usable, and it has stayed usable since. So a command left over from
-  // before the activation, a fault or a deactivation is never sent.
-  std::atomic<bool> gripper_armed_{false};
   std::atomic<bool> gripper_usable_{false};    // active, no gripper fault, no robot fault (read())
   std::atomic<GripperSource> gripper_source_{GripperSource::Frame};
   // Moving: set by write() when a MoveGripper goes out, cleared by read() once the frame shows it
@@ -159,7 +151,6 @@ private:
   // (sdk_quirks G9) and the next gripper command waits.
   std::atomic<GripperBusy> gripper_busy_{GripperBusy::Idle};
   // realtime thread only:
-  double gripper_last_sent_ = 0.0;   // m
   std::chrono::steady_clock::time_point gripper_posted_at_{};
   bool gripper_seen_running_ = false;      // the frame showed motion_done = 0 since the post
   int stream_idle_frames_ = 0;             // consecutive reads: stream paused, firmware queue empty
@@ -169,6 +160,40 @@ private:
   double gripper_reported_ = -1.0;         // the opening last reported, for the velocity
   double gripper_velocity_ = 0.0;
   std::chrono::steady_clock::time_point gripper_changed_at_{};
+  std::atomic<double> gripper_opening_{0.0};   // the opening last reported [m], for goal results
+
+  // ---- gripper action `<ns>/gripper_controller/gripper_cmd` (on the node below) ----
+  // One goal at a time. The executor thread accepts, preempts, cancels and finishes goals; the
+  // realtime thread sends a goal's MoveGripper and reports how the frame shows its motion ending.
+  using GripperAction = control_msgs::action::ParallelGripperCommand;
+  using GripperGoalHandle = rclcpp_action::ServerGoalHandle<GripperAction>;
+  // How the frame showed a motion end (sdk_quirks G13, G15): motion_done 1, 2, 3, other; or never
+  // started (1.5 s), or not done within 30 s.
+  enum class GripperOutcome : uint64_t { Reached = 1, Grasped, Dropped, Other, NeverStarted, TimedOut };
+  struct GripperGoal
+  {
+    std::shared_ptr<GripperGoalHandle> handle;   // none: no goal
+    uint64_t id = 0;
+    uint64_t epoch = 0;                          // gripper_epoch_ when it was accepted
+    fr_client_library::GripperCommand command;
+    bool sent = false;                           // its MoveGripper went out
+  };
+  void onGripperGoalAccepted(const std::shared_ptr<GripperGoalHandle> & handle);
+  void onGripperGoalTimer();
+  // executor thread, gripper_goal_mutex_ held: ends the goal and forgets it
+  enum class GoalEnd { Succeeded, Aborted, Canceled };
+  void finishGripperGoal(GoalEnd end, const std::string & why, bool reached = false, bool stalled = false);
+  std::mutex gripper_goal_mutex_;   // guards gripper_goal_; the realtime thread only try_locks it
+  GripperGoal gripper_goal_;
+  uint64_t gripper_goal_ids_ = 0;   // executor thread only
+  // Bumped whenever goals accepted before must not run any more: activation and deactivation of
+  // the hardware, an error, the gripper becoming unusable, an activation of the gripper.
+  std::atomic<uint64_t> gripper_epoch_{0};
+  // The goal whose motion the frame showed ending, and how: (id << 3) | GripperOutcome.
+  std::atomic<uint64_t> gripper_finished_{0};
+  uint64_t gripper_sent_id_ = 0;    // realtime thread only: the goal of the motion in progress
+  rclcpp_action::Server<GripperAction>::SharedPtr gripper_action_;
+  rclcpp::TimerBase::SharedPtr gripper_goal_timer_;
 
   // ---- reset service (lives on the controller manager's executor) ----
   rclcpp::Node::SharedPtr node_;
