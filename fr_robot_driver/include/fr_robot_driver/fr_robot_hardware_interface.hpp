@@ -23,6 +23,7 @@
 #include "fr_client_library/state_receiver.hpp"
 #include "control_msgs/action/parallel_gripper_command.hpp"
 #include "diagnostic_msgs/msg/diagnostic_status.hpp"
+#include "fr_robot_driver/gripper_motion.hpp"
 #include "fr_robot_driver/kinematics.hpp"
 #include "fr_robot_driver/status_report.hpp"
 #include "hardware_interface/system_interface.hpp"
@@ -80,8 +81,6 @@ private:
   // ---- gripper (sdk_quirks G1-G7) ----
   bool hasGripper() const {return !gripper_joint_.empty();}
   bool gripperActive(const fr_client_library::RobotState384 & s) const;
-  // The opening [m] to report for this frame, and where it comes from (GripperSource).
-  double gripperOpening(const fr_client_library::RobotState384 & s, GripperSource & source) const;
   void readGripper(const fr_client_library::StateSnapshot & snap, fr_client_library::FaultClass fc);
   void writeGripper(bool arm_moves);
   void onGripperActivate(
@@ -150,20 +149,8 @@ private:
   // done. Activating: set and cleared by the activation service. Either way the arm stays still
   // (sdk_quirks G9) and the next gripper command waits.
   std::atomic<GripperBusy> gripper_busy_{GripperBusy::Idle};
-  // realtime thread only:
-  std::chrono::steady_clock::time_point gripper_posted_at_{};
-  bool gripper_seen_running_ = false;      // the frame showed motion_done = 0 since the post
-  int gripper_sent_position_ = 0;          // percent, the motion in progress
-  int gripper_frame_state_ = -1;           // motion_done * 1000 + opening %, as last seen
-  std::chrono::steady_clock::time_point gripper_frame_state_since_{};
+  GripperMotion gripper_motion_;           // realtime thread only: completion and opening inference
   int stream_idle_frames_ = 0;             // consecutive reads: stream paused, firmware queue empty
-  double gripper_known_ = -1.0;            // last opening [m] the frame reported; -1: none yet
-  bool gripper_known_from_activation_ = false;
-  bool gripper_awaiting_nonzero_ = false;  // a motion to a target > 0 % went out, the frame still says 0 %
-  bool gripper_was_active_ = false;
-  double gripper_reported_ = -1.0;         // the opening last reported, for the velocity
-  double gripper_velocity_ = 0.0;
-  std::chrono::steady_clock::time_point gripper_changed_at_{};
   std::atomic<double> gripper_opening_{0.0};   // the opening last reported [m], for goal results
 
   // ---- gripper action `<ns>/gripper_controller/gripper_cmd` (on the node below) ----
@@ -171,9 +158,6 @@ private:
   // realtime thread sends a goal's MoveGripper and reports how the frame shows its motion ending.
   using GripperAction = control_msgs::action::ParallelGripperCommand;
   using GripperGoalHandle = rclcpp_action::ServerGoalHandle<GripperAction>;
-  // How the frame showed a motion end (sdk_quirks G13, G15): motion_done 1, 2, 3, other; or never
-  // started (1.5 s), or not done within 30 s.
-  enum class GripperOutcome : uint64_t { Reached = 1, Grasped, Dropped, Other, NeverStarted, TimedOut };
   struct GripperGoal
   {
     std::shared_ptr<GripperGoalHandle> handle;   // none: no goal

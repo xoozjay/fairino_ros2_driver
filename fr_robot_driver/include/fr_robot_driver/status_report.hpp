@@ -13,6 +13,7 @@
 #include <string>
 
 #include "diagnostic_msgs/msg/diagnostic_status.hpp"
+#include "fr_robot_driver/gripper_motion.hpp"
 #include "fr_client_library/fault_state.hpp"
 
 namespace fr_robot_driver
@@ -44,12 +45,6 @@ inline const char * toString(CommReason r)
   }
   return "?";
 }
-
-// Where the reported gripper opening comes from. The frame says 0 % while a motion starts and
-// after an activation (sdk_quirks G5, G10): then the last known opening is kept, or fully open.
-// While the gripper is not active the frame says 0 % whatever the fingers do (G1, G11): fully open
-// is reported, the widest outline, so that collision checking errs on the safe side.
-enum class GripperSource { Frame, HeldDuringMotion, InferredOpenAfterActivation, UnknownNotActive };
 
 inline const char * toString(GripperSource s)
 {
