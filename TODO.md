@@ -63,9 +63,10 @@
   `StatusTopic.LinkLossThenTheControllersOwnFaultIsSeenWithoutAnyCommand`（等待状态超时）各在一次 check 中失败，单独与重跑
   通过 —— impact: check 偶尔误报，须重跑确认；改为模拟时间可根除（同 `DepthLoop` 的做法）
 
-- **`ServoJ` 往返最大 7.7 ms，接近 8 ms 周期**（真机 S17）：网络更差时发送会落后，`ServoSender` 追赶、
-  固件队列吸收 —— impact: 队列抖动变大，`prefill` 余量被吃掉
-- **急停在本硬件上表现为控制箱断电**（F4）：断线期间驱动只能报"链路中断"，分不清急停、掉电与网络，
+- **`ServoJ` 往返最大 7.7 ms，接近 8 ms 周期**（真机 S17、S21）：网络更差时发送会落后，`ServoSender` 追赶、
+  固件队列吸收。但在 250 Hz（4 ms 周期）与 100% 主机 CPU 压测下，经 `SCHED_FIFO 50` 调度与 `DepthLoop` 闭环补偿，
+  队列全程稳定在 3.08 ± 1 条，5 分钟 139 圈连续长周期实测无漂移、无欠载 —— impact: 队列抖动被平滑吸收，已在极限负载下验证
+- **急停在本硬件上表现为控制箱断电**（F4、S21）：断线期间驱动只能报"链路中断"，分不清急停、掉电与网络，
   要等控制器重新上线、`~/status` 报 1/149 才能确定 —— impact: 断线那 ~20 s 内上层只知道"断了"
 - **控制器 20004 与 8080 单客户端**：驱动运行时诊断工具（`fr_probe`、`fr_servo_bench`）连不上，
   排障期间只能停驱动 —— impact: 真机排障窗口
