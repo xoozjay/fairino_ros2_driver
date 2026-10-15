@@ -22,8 +22,8 @@
       initial_positions_file  : YAML with initial_positions map (unprefixed joint names)
       mock_sensor_commands    : mock GPIO sensor commands (default false)
       gripper                 : none (default) or pgi140: adds the joint <tf_prefix>left_finger_joint
-                                (gripper_dahuan_pgi140) with commands position [m], max_velocity
-                                [m/s], max_effort [N] and states position, velocity
+                                (gripper_dahuan_pgi140) with commands position [m], max_effort [N]
+                                and states position, velocity
       gripper_index           : real hardware only, the controller's gripper number (default 1)
 
     Both branches expose the same <gpio name="<tf_prefix>fr_status"> with one state interface,
@@ -71,9 +71,6 @@
     <joint name="${tf_prefix}left_finger_joint">
       <limits enable="false"/>
       <command_interface name="position">
-        <param name="initial_value">0.0</param>
-      </command_interface>
-      <command_interface name="max_velocity">
         <param name="initial_value">0.0</param>
       </command_interface>
       <command_interface name="max_effort">

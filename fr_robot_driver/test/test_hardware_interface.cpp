@@ -633,7 +633,7 @@ namespace
 const char * kWithGripper = "gripper:=pgi140";
 const char * kFinger = "left_finger_joint/position";
 const std::vector<std::string> kGripperCommands = {
-  "left_finger_joint/position", "left_finger_joint/max_velocity", "left_finger_joint/max_effort"};
+  "left_finger_joint/position", "left_finger_joint/max_effort"};
 const char * kScaling = "speed_scaling/speed_scaling_factor";
 
 // Runs controller cycles until `pred` holds (the gripper sender works asynchronously).
@@ -713,13 +713,14 @@ TEST(Gripper, MockDescriptionHasTheFingerJoint)
   for (const auto & c : kGripperCommands) {
     EXPECT_TRUE(rm.command_interface_exists(c)) << c;
   }
+  EXPECT_FALSE(rm.command_interface_exists("left_finger_joint/max_velocity"));
   EXPECT_TRUE(rm.state_interface_exists("left_finger_joint/velocity"));
   EXPECT_TRUE(rm.state_interface_exists(kScaling));
   EXPECT_FALSE(rm.state_interface_exists("right_finger_joint/position"));   // a mimic joint: TF only
   EXPECT_NE(params.robot_description.find("<parent link=\"tool0\"/>"), std::string::npos);
 }
 
-TEST(Gripper, GoalsGoOutWithTheirSpeedAndForceAndSucceed)
+TEST(Gripper, GoalsSendPositionAndForceAndIgnoreVelocity)
 {
   Rig r("", 125, kWithGripper);
   startWithGripperAt(r, 30);
@@ -734,7 +735,8 @@ TEST(Gripper, GoalsGoOutWithTheirSpeedAndForceAndSucceed)
   EXPECT_TRUE(res->result->reached_goal);
   EXPECT_FALSE(res->result->stalled);
   EXPECT_NEAR(res->result->state.position.at(0), 0.02, 1e-9);
-  EXPECT_EQ(r.fake.params("MoveGripper").at(0), kMove50);  // 50 %, default 50 % speed, 20 % force
+  EXPECT_DOUBLE_EQ(r.state("left_finger_joint/velocity"), 0.0);
+  EXPECT_EQ(r.fake.params("MoveGripper").at(0), kMove50);  // 50 % opening, fixed 50 % speed, 20 % force
 
   h = c.send(0.02);                                  // where it is: sent all the same (a re-grip)
   ASSERT_TRUE(h);
@@ -746,9 +748,10 @@ TEST(Gripper, GoalsGoOutWithTheirSpeedAndForceAndSucceed)
       EXPECT_TRUE(g && c.result(g));
       return r.fake.params("MoveGripper").back();
     };
-  EXPECT_EQ(sent(0.04, 0.011, 14.0), (std::vector<double>{1, 100, 25, 10, 30000, 1, 0, 0, 0, 0}));
-  // beyond the stroke and the scales: clamped
-  EXPECT_EQ(sent(0.08, 1.0, 1000.0), (std::vector<double>{1, 100, 100, 100, 30000, 1, 0, 0, 0, 0}));
+  // Velocity is ignored; only effort is converted. Speed stays at the fixed protocol value 50.
+  EXPECT_EQ(sent(0.04, 0.011, 14.0), (std::vector<double>{1, 100, 50, 10, 30000, 1, 0, 0, 0, 0}));
+  // Opening and force beyond their ranges are clamped.
+  EXPECT_EQ(sent(0.08, 1.0, 1000.0), (std::vector<double>{1, 100, 50, 100, 30000, 1, 0, 0, 0, 0}));
   EXPECT_EQ(sent(-0.01, -1.0, -1.0), (std::vector<double>{1, 0, 50, 20, 30000, 1, 0, 0, 0, 0}));
   EXPECT_EQ(r.fake.count("ActGripper"), 0);         // never activated by the driver
   ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "gripper_motion_done") == "1";}));

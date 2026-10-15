@@ -250,7 +250,8 @@ TEST(GripperMotion, ResetForgetsTheMotionButKeepsTheOpening)
   replay(motion, {{0, true, 0, 0, 50, Source::HeldDuringMotion}});
   motion.resetMotion();
   replay(motion, {
-    {1, true, 1, 0, 0}, {301, true, 1, 0, 0}, {400, true, 1, 50, 50},
+    {1, true, 0, 0, 50, Source::HeldDuringMotion},
+    {301, true, 0, 0, 50, Source::HeldDuringMotion}, {400, true, 1, 50, 50},
   });
   motion.sent(50, at(401));
   replay(motion, {

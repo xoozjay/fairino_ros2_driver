@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <initializer_list>
 #include <iterator>
 #include <optional>
 
@@ -31,11 +32,8 @@ constexpr double kRadToDeg = 180.0 / M_PI;
 // ---- gripper: DH-Robotics PGI-140-80 (gripper_dahuan_pgi140) ----
 // Travel of one jaw from closed (0 %) to fully open (100 %); the URDF's left_finger_joint range.
 constexpr double kGripperStroke = GripperMotion::kStroke;
-// m/s per percent of MoveGripper's velocity: about 22 %/s of the stroke at 20 % (sdk_quirks G6),
-// assumed linear.
-constexpr double kGripperSpeedPerPercent = kGripperStroke * 0.011;
 constexpr double kGripperForcePerPercent = 1.4;   // N per percent of MoveGripper's force: 140 N full scale
-constexpr int kGripperDefaultVelocity = 50;       // percent, when the command gives none
+constexpr int kGripperVelocity = 50;              // fixed protocol value; speed has no effect (G12)
 constexpr int kGripperDefaultForce = 20;          // percent: gentle enough for glassware
 constexpr double kStillDegPerS = 0.5;  // the arm counts as standing still below this joint speed
 // The arm has arrived when every joint reads back within this of the point sent (sdk_quirks S18:
@@ -89,17 +87,23 @@ CallbackReturn FrRobotHardwareInterface::on_init(
       return std::any_of(list.begin(), list.end(), [&](const auto & i) {return i.name == n;});
     };
 
-  // ---- optional gripper joint: opening [m] commanded with max_velocity [m/s] and max_effort [N] ----
+  const auto interfaces = [&](const auto & components, const std::string & name,
+      std::initializer_list<const char *> commands, std::initializer_list<const char *> states) {
+      const auto c = std::find_if(components.begin(), components.end(),
+          [&](const auto & item) {return item.name == name;});
+      return c != components.end() &&
+        std::all_of(commands.begin(), commands.end(),
+        [&](const auto * n) {return has(c->command_interfaces, n);}) &&
+        std::all_of(states.begin(), states.end(),
+        [&](const auto * n) {return has(c->state_interfaces, n);});
+    };
+
+  // ---- optional gripper joint: opening [m] commanded with max_effort [N] ----
   gripper_joint_ = param("gripper_joint", "");
   if (hasGripper()) {
-    const auto g = std::find_if(info.joints.begin(), info.joints.end(),
-        [&](const auto & j) {return j.name == gripper_joint_;});
-    if (g == info.joints.end() || !has(g->command_interfaces, hardware_interface::HW_IF_POSITION) ||
-      !has(g->command_interfaces, "max_velocity") || !has(g->command_interfaces, "max_effort") ||
-      !has(g->state_interfaces, hardware_interface::HW_IF_POSITION) ||
-      !has(g->state_interfaces, hardware_interface::HW_IF_VELOCITY))
+    if (!interfaces(info.joints, gripper_joint_, {"position", "max_effort"}, {"position", "velocity"}))
     {
-      RCLCPP_ERROR(log, "gripper joint '%s': need commands 'position', 'max_velocity', 'max_effort' "
+      RCLCPP_ERROR(log, "gripper joint '%s': need commands 'position', 'max_effort' "
         "and states 'position', 'velocity'", gripper_joint_.c_str());
       return CallbackReturn::ERROR;
     }
@@ -134,9 +138,7 @@ CallbackReturn FrRobotHardwareInterface::on_init(
 
   // ---- gpio fr_status: the fault class only; everything else is in `~/status` (docs/fault_handling.md 7)
   const std::string gpio_name = param("tf_prefix", "") + "fr_status";
-  const auto gpio = std::find_if(info.gpios.begin(), info.gpios.end(),
-      [&](const auto & g) {return g.name == gpio_name;});
-  if (gpio == info.gpios.end() || !has(gpio->state_interfaces, "fault_class")) {
+  if (!interfaces(info.gpios, gpio_name, {}, {"fault_class"})) {
     RCLCPP_ERROR(log, "the URDF needs <gpio name=\"%s\"> with the state interface 'fault_class'",
       gpio_name.c_str());
     return CallbackReturn::ERROR;
@@ -145,9 +147,7 @@ CallbackReturn FrRobotHardwareInterface::on_init(
 
   // ---- gpio speed_scaling: 0 pauses the joint_trajectory_controller while the gripper is busy ----
   const std::string scaling_name = param("tf_prefix", "") + "speed_scaling";
-  const auto scaling = std::find_if(info.gpios.begin(), info.gpios.end(),
-      [&](const auto & g) {return g.name == scaling_name;});
-  if (scaling == info.gpios.end() || !has(scaling->state_interfaces, "speed_scaling_factor")) {
+  if (!interfaces(info.gpios, scaling_name, {}, {"speed_scaling_factor"})) {
     RCLCPP_ERROR(log, "the URDF needs <gpio name=\"%s\"> with the state interface 'speed_scaling_factor'",
       scaling_name.c_str());
     return CallbackReturn::ERROR;
@@ -891,8 +891,7 @@ void FrRobotHardwareInterface::onGripperGoalAccepted(const std::shared_ptr<Gripp
   fr_client_library::GripperCommand command;
   command.position = static_cast<int>(
     std::lround(std::clamp(c.position[0], 0.0, kGripperStroke) / kGripperStroke * 100.0));
-  command.velocity = gripperPercent(c.velocity.empty() ? 0.0 : c.velocity[0],
-    kGripperSpeedPerPercent, kGripperDefaultVelocity);
+  command.velocity = kGripperVelocity;
   command.force = gripperPercent(c.effort.empty() ? 0.0 : c.effort[0],
     kGripperForcePerPercent, kGripperDefaultForce);
   std::lock_guard<std::mutex> lock(gripper_goal_mutex_);
