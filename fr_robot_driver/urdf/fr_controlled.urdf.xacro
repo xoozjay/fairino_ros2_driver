@@ -7,7 +7,7 @@
     tutorials. This is what the controller_manager consumes.
 
     Arguments:
-      model                  : fr_description model (default fairino20_v6)
+      model                  : fr_description model (default fairino5_v6)
       tf_prefix              : link/joint prefix (default "")
       use_mock_hardware      : mock_components/GenericSystem (default true)
       initial_positions_file : ros2_control initial positions
@@ -19,7 +19,7 @@
                                (gripper_dahuan_pgi140, one more joint in ros2_control)
       gripper_index          : real hardware only, the controller's gripper number (default 1)
   -->
-  <xacro:arg name="model" default="fairino20_v6"/>
+  <xacro:arg name="model" default="fairino5_v6"/>
   <xacro:arg name="tf_prefix" default=""/>
   <xacro:arg name="use_mock_hardware" default="true"/>
   <xacro:arg name="initial_positions_file"

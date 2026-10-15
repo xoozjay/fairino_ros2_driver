@@ -36,7 +36,7 @@ def generate_launch_description():
     declared_arguments = [
         DeclareLaunchArgument(
             "model",
-            default_value="fairino20_v6",
+            default_value="fairino5_v6",
             choices=MODELS,
             description="Fairino robot model to visualize.",
         ),

@@ -8,10 +8,10 @@
     they can pass tf_prefix/parent.
 
     Arguments:
-      model     : one of config/ subdirectories (default fairino20_v6)
+      model     : one of config/ subdirectories (default fairino5_v6)
       tf_prefix : frame prefix (default "")
   -->
-  <xacro:arg name="model" default="fairino20_v6"/>
+  <xacro:arg name="model" default="fairino5_v6"/>
   <xacro:arg name="tf_prefix" default=""/>
 
   <xacro:include filename="$(find fr_description)/urdf/fr_macro.xacro"/>

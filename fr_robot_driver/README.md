@@ -23,7 +23,7 @@ ros2 launch fr_robot_driver dual_fr_cell.launch.py use_mock_hardware:=false \
   alice_ip:=<ip> bob_ip:=<ip>
 ```
 
-**机型必须和控制器一致**：launch 的 `model` 默认是 `fairino20_v6`，而仿真器是 FR5，所以要写 `model:=fairino5_v6`。
+**机型必须和控制器一致**：launch 的 `model` 默认是 `fairino5_v6`，其他型号须显式给出 `model:=…`。
 插件在 configure 时核对控制器报告的型号，不一致就拒绝；再用 `flange_cur_pos` 与自家 FK 交叉检查（位置 ≤ 10 mm、
 姿态 ≤ 1°）。相关参数：`allow_unknown_model`（控制器型号不在表里时放行，法兰检查仍有效）、`fk_check`、
 `fk_position_tolerance_mm`、`fk_angle_tolerance_deg`。
@@ -171,7 +171,7 @@ ros2 action send_goal /gripper_controller/gripper_cmd control_msgs/action/Parall
 ## 用法
 
 ```bash
-# 单机（默认 fairino20_v6，mock）
+# 单机（默认 fairino5_v6，mock）
 ros2 launch fr_robot_driver fr_control.launch.py
 
 # 指定型号 + tf_prefix + 命名空间

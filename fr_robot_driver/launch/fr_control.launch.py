@@ -203,7 +203,7 @@ def launch_setup(context, *args, **kwargs):
 def generate_launch_description():
     pkg_share = get_package_share_directory(PACKAGE)
     return LaunchDescription([
-        DeclareLaunchArgument('model', default_value='fairino20_v6'),
+        DeclareLaunchArgument('model', default_value='fairino5_v6'),
         DeclareLaunchArgument('tf_prefix', default_value=''),
         DeclareLaunchArgument('namespace', default_value=''),
         DeclareLaunchArgument('use_mock_hardware', default_value='true'),
