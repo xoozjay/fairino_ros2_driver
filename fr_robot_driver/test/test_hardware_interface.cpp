@@ -571,6 +571,32 @@ TEST(HardwareInterface, ASmoothRampWithinTheLimitIsAccepted)
   EXPECT_NEAR(r.fake.servoJ().back()[0], 100.0, 1e-6);
 }
 
+// When JTC cancels a trajectory, it commands state_current_ (feedback), jumping backwards by the
+// following error (~118 ms * v, S19). The driver smoothly ramps down within max_step rather than
+// tripping a protective stop.
+TEST(HardwareInterface, CancelHoldRampsSmoothlyWithoutStepFault)
+{
+  Rig r;
+  ASSERT_TRUE(r.configure());
+  ASSERT_TRUE(r.activate());
+  auto cmd = r.rm->claim_command_interface(kPan);
+  for (int i = 1; i <= 20; ++i) {
+    ASSERT_NE(r.cycle([&] {(void)cmd.set_value(i * 1.0 * kDeg);}).result, return_type::DEACTIVATE);
+  }
+  // Simulate JTC cancel: feedback lagged at 16.0 deg while command reached 20.0 deg (4.0 deg jump > 1.44 limit).
+  // JTC commands the feedback position directly (target = 16.0 deg).
+  r.fake.edit([](auto & s) {s.jt_cur_pos[0] = 16.0;});
+  for (int i = 0; i < 15; ++i) {
+    ASSERT_NE(r.cycle([&] {(void)cmd.set_value(16.0 * kDeg);}).result, return_type::DEACTIVATE) << i;
+  }
+  EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_ACTIVE);
+  EXPECT_EQ(r.state("fr_status/fault_class"), 0.0);
+  const auto sent = r.fake.servoJ();
+  for (size_t i = 1; i < sent.size(); ++i) {
+    EXPECT_LE(std::abs(sent[i][0] - sent[i - 1][0]), 1.45) << "step exceeded limit at " << i;
+  }
+}
+
 TEST(HardwareInterface, ControllerFasterThanCmdTSendsEveryRatioThCycle)
 {
   Rig r("", 500);                                   // 500 Hz controller, cmdT 8 ms: one segment per 4 cycles
