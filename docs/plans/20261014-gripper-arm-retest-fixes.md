@@ -297,5 +297,27 @@ MoveIt 的执行时长监控会把暂停的时间算作超时：MoveIt 计划须
 
 ### 驱动代码修改与测试进度
 
-（以下待驱动代码修改完成后更新）
+Approach 第 1–6 步完成，每步一个提交、各自通过 `scripts/check.sh`；真机 D 组待操作者。最后一次 check：193 tests,
+0 failures, 4 skipped，连续两次。
+
+- **第 4 步**（速度缩放）：xacro 的 `<gpio name="${tf_prefix}speed_scaling">` 真机与 mock 共用；插件在 `read()` 里写因子，
+  夹爪忙（运动或激活）且硬件激活时 0.0。mock 管线：JTC active、`dynamic_joint_states` 报 1.0、J6 轨迹 SUCCEEDED
+- **扣臂删除**：`arm_held_`、2 s 超时、`ProtectiveStop::HoldTimeout` 删除；夹爪完成的周期起命令放行，只经步长检查。
+  `~/status` 的 `arm_commands` 由硬件状态与 `gripper.busy` 推出，停用后不再残留
+- **第 1 步**（插件提供 action）：相对名创建，测试客户端按 `/<ns>/gripper_controller/gripper_cmd` 连上（A15）。
+  挂起目标的作废用一个计数（`gripper_epoch_`）：硬件激活/停用/出错、夹爪变为不可用、激活夹爪时加一，目标记下接受时的值，
+  实时侧不发值不符的目标、定时器（20 ms）把它 ABORTED。实时侧对目标只 `try_lock`，运动结束经一个原子量
+  （目标号 << 3 | 结果）交给定时器。mock 仍加载上游控制器，action 同名同类型、开合 SUCCEEDED
+- **第 3 步**（原地运动开度）：第一版只要帧报过非 0 就采信 0 %，check 中偶发失败——发出后、控制器接下命令前，帧仍报原开度，
+  提前解除了保持。改为运动开始（帧报过 0）后的非 0 才算；测试让假控制器延迟 100 ms 应答，确定性地覆盖这一窗口
+- **第 5 步**：路径容差 0.85 rad
+- **测试有效性**：每项新行为都把实现改回旧逻辑或关掉，确认新测试失败（因子恒 1、旧扣臂、无作废计数、只认 1 为完成、
+  原地开度旧条件），改回后通过
+- **与测试计划的出入**：A9（1.5 s / 30 s 超时）按维护者要求不做；A3 中"运动中报 3 → ABORTED"由测试在运动中改帧覆盖；
+  B 组为 `test_trajectory_pause`（ControllerManager 循环 + JTC + 安装的 `controllers.yaml` + 插件 + 假控制器）：B1/B2 合为
+  一个用例（+2°/0.5 s 与 +17°/0.5 s 线性），B5、B6 各一。B 组的有效性：插件因子恒 1 时 B1 以"command refused …
+  2.000 deg after 0.000 deg"保护停止
+- **顺带修复**：`on_configure` 清空 `frame_` 后，第一次 `read()` 若恰逢接收器加锁（`tryLatest` 失败），会把空帧判为过期、
+  报 COMM（check 中一次 `no state frame in time`）；现在没有帧时等一次拷贝。偶发的 `ServoSender`、`StatusTopic` 墙钟测试失败
+  记入 TODO
 

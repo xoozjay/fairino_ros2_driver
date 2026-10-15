@@ -77,6 +77,10 @@
 
 ## 已知风险
 
+- **依赖墙钟的测试在负载下偶发失败**：`ServoSender.TrimmedSendsStayOnThePolylineOfTheCommands`（trim 468 ppm，要求 > 500）、
+  `StatusTopic.LinkLossThenTheControllersOwnFaultIsSeenWithoutAnyCommand`（等待状态超时）各在一次 check 中失败，单独与重跑
+  通过 —— impact: check 偶尔误报，须重跑确认；改为模拟时间可根除（同 `DepthLoop` 的做法）
+
 - **`ServoJ` 往返最大 7.7 ms，接近 8 ms 周期**（真机 S17）：网络更差时发送会落后，`ServoSender` 追赶、
   固件队列吸收 —— impact: 队列抖动变大，`prefill` 余量被吃掉
 - **急停在本硬件上表现为控制箱断电**（F4）：断线期间驱动只能报"链路中断"，分不清急停、掉电与网络，
