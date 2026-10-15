@@ -29,26 +29,12 @@ namespace
 constexpr double kDegToRad = M_PI / 180.0;
 constexpr double kRadToDeg = 180.0 / M_PI;
 
-// ---- gripper: DH-Robotics PGI-140-80 (gripper_dahuan_pgi140) ----
-// Travel of one jaw from closed (0 %) to fully open (100 %); the URDF's left_finger_joint range.
-constexpr double kGripperStroke = GripperMotion::kStroke;
-constexpr double kGripperForcePerPercent = 1.4;   // N per percent of MoveGripper's force: 140 N full scale
-constexpr int kGripperVelocity = 50;              // fixed protocol value; speed has no effect (G12)
-constexpr int kGripperDefaultForce = 20;          // percent: gentle enough for glassware
+// ---- gripper: DH-Robotics PGI-140-80 (gripper_dahuan_pgi140); the constants are in GripperGoals ----
 constexpr double kStillDegPerS = 0.5;  // the arm counts as standing still below this joint speed
 // The arm has arrived when every joint reads back within this of the point sent (sdk_quirks S18:
 // standing, the readback stays within 0.002 deg)
 constexpr double kAtRestDeg = 0.01;
 constexpr auto kGripperActivationTimeout = std::chrono::seconds(3);
-
-// A command value [unit] as a MoveGripper percent in [1, 100]; `fallback` if it gives none (<= 0).
-int gripperPercent(double value, double per_percent, int fallback)
-{
-  if (!std::isfinite(value) || value <= 0.0) {
-    return fallback;
-  }
-  return static_cast<int>(std::clamp<long>(std::lround(value / per_percent), 1, 100));
-}
 
 }  // namespace
 
@@ -851,23 +837,22 @@ void FrRobotHardwareInterface::readGripper(const StateSnapshot & snap, FaultClas
 void FrRobotHardwareInterface::writeGripper(bool arm_moves)
 {
   // The goal's MoveGripper waits for the motion in progress and for the arm to stand (G8, G9)
-  if (!gripper_usable_.load() || gripper_busy_.load() != GripperBusy::Idle ||
-    stream_idle_frames_ < 2 || arm_moves)
-  {
-    return;
+  if (!gripper_sender_->running()) {
+    return;   // its thread is gone: the executor ends the goal instead
   }
   std::unique_lock<std::mutex> lock(gripper_goal_mutex_, std::try_to_lock);
   if (!lock.owns_lock()) {
     return;   // the executor holds it this instant: next cycle
   }
-  GripperGoal & goal = gripper_goal_;
-  if (!goal.handle || goal.sent || goal.epoch != gripper_epoch_.load()) {
+  if (!gripper_goals_.maySend(gripper_epoch_.load(), gripper_usable_.load(),
+    gripper_busy_.load() != GripperBusy::Idle, stream_idle_frames_, arm_moves))
+  {
     return;
   }
-  if (gripper_sender_->post(goal.command)) {   // never blocks; busy this instant: again next cycle
-    goal.sent = true;
-    gripper_motion_.sent(goal.command.position, std::chrono::steady_clock::now());
-    gripper_sent_id_ = goal.id;
+  if (gripper_sender_->post(gripper_goals_.goal().command)) {   // never blocks; busy: again next cycle
+    gripper_goals_.markSent();
+    gripper_motion_.sent(gripper_goals_.goal().command.position, std::chrono::steady_clock::now());
+    gripper_sent_id_ = gripper_goals_.goal().id;
     gripper_busy_ = GripperBusy::Moving;
   }
 }
@@ -875,67 +860,57 @@ void FrRobotHardwareInterface::writeGripper(bool arm_moves)
 void FrRobotHardwareInterface::onGripperGoalAccepted(const std::shared_ptr<GripperGoalHandle> & handle)
 {
   const auto & c = handle->get_goal()->command;
-  fr_client_library::GripperCommand command;
-  command.position = static_cast<int>(
-    std::lround(std::clamp(c.position[0], 0.0, kGripperStroke) / kGripperStroke * 100.0));
-  command.velocity = kGripperVelocity;
-  command.force = gripperPercent(c.effort.empty() ? 0.0 : c.effort[0],
-    kGripperForcePerPercent, kGripperDefaultForce);
   std::lock_guard<std::mutex> lock(gripper_goal_mutex_);
-  if (gripper_goal_.handle) {
+  if (const auto replaced = gripper_goals_.accept(GripperGoals::command(c.position[0],
+    c.effort.empty() ? 0.0 : c.effort[0]), gripper_epoch_.load(), gripper_goal_ids_))
+  {
     // the controller cannot interrupt a motion (sdk_quirks G15): the new goal's waits for it
-    finishGripperGoal(GoalEnd::Aborted, "preempted by a new goal");
+    finishGripperGoal(GoalEnd::Aborted, "preempted by a new goal", replaced);
   }
-  gripper_goal_ = GripperGoal{handle, ++gripper_goal_ids_, gripper_epoch_.load(), command, false};
+  gripper_handle_ = handle;
+  const GripperGoal & goal = gripper_goals_.goal();
   RCLCPP_INFO(get_logger(), "gripper goal %lu: %d %%, speed %d %%, force %d %%",
-    static_cast<unsigned long>(gripper_goal_.id), command.position, command.velocity, command.force);
+    static_cast<unsigned long>(goal.id), goal.command.position, goal.command.velocity,
+    goal.command.force);
 }
 
 void FrRobotHardwareInterface::onGripperGoalTimer()
 {
   std::lock_guard<std::mutex> lock(gripper_goal_mutex_);
-  const GripperGoal & goal = gripper_goal_;
-  if (!goal.handle) {
+  if (!gripper_handle_) {
+    return;   // no goal to report on
+  }
+  if (gripper_handle_->is_canceling()) {
+    finishGripperGoal(gripper_goals_.canceled().end, gripper_goals_.canceled().why,
+      gripper_goals_.goal().id);
     return;
   }
-  if (goal.handle->is_canceling()) {
-    // a motion that went out runs to its end (G15); the arm waits for it as for any other
-    finishGripperGoal(GoalEnd::Canceled, goal.sent ? "canceled; the motion already sent runs to its end" :
-      "canceled before it was sent");
+  const GripperGoal & goal = gripper_goals_.goal();
+  const auto stale = gripper_goals_.stale(gripper_epoch_.load());
+  if (stale.end != GoalEnd::Running) {
+    finishGripperGoal(stale.end, stale.why, goal.id);
     return;
   }
-  if (goal.epoch != gripper_epoch_.load()) {
-    finishGripperGoal(GoalEnd::Aborted, "the hardware was (de)activated or failed, or the gripper "
-      "became unusable or was activated");
+  if (goal.sent && !gripper_sender_->running()) {
+    // its thread is gone: a goal waiting for the frame's outcome would never be answered
+    finishGripperGoal(gripper_goals_.senderGone().end, gripper_goals_.senderGone().why, goal.id);
     return;
   }
-  const uint64_t finished = gripper_finished_.load();
-  if (!goal.sent || (finished >> 3) != goal.id) {
-    return;
-  }
-  switch (static_cast<GripperOutcome>(finished & 7u)) {
-    case GripperOutcome::Reached: finishGripperGoal(GoalEnd::Succeeded, "reached", true, false); break;
-    case GripperOutcome::Grasped:
-      finishGripperGoal(GoalEnd::Succeeded, "an object is grasped", false, true);
-      break;
-    case GripperOutcome::Dropped: finishGripperGoal(GoalEnd::Aborted, "the object was dropped"); break;
-    case GripperOutcome::Other: finishGripperGoal(GoalEnd::Aborted, "unknown motion_done value"); break;
-    case GripperOutcome::NeverStarted:
-      finishGripperGoal(GoalEnd::Aborted, "the frame never showed the motion start within 1.5 s");
-      break;
-    case GripperOutcome::TimedOut: finishGripperGoal(GoalEnd::Aborted, "not done within 30 s"); break;
+  const GoalEnding ending = gripper_goals_.outcome(gripper_finished_.load());
+  if (ending.end != GoalEnd::Running) {
+    finishGripperGoal(ending.end, ending.why, goal.id, ending.reached, ending.stalled);
   }
 }
 
-void FrRobotHardwareInterface::finishGripperGoal(
-  GoalEnd end, const std::string & why, bool reached, bool stalled)
+void FrRobotHardwareInterface::finishGripperGoal(GoalEnd end, const std::string & why, uint64_t id,
+  bool reached, bool stalled)
 {
   auto result = std::make_shared<GripperAction::Result>();
   result->state.name = {gripper_joint_};
   result->state.position = {gripper_opening_.load()};
   result->reached_goal = reached;
   result->stalled = stalled;
-  const auto & handle = gripper_goal_.handle;
+  const auto & handle = gripper_handle_;
   if (end == GoalEnd::Succeeded) {
     handle->succeed(result);
   } else if (end == GoalEnd::Canceled) {
@@ -943,14 +918,14 @@ void FrRobotHardwareInterface::finishGripperGoal(
   } else {
     handle->abort(result);
   }
-  const auto id = static_cast<unsigned long>(gripper_goal_.id);
   if (end == GoalEnd::Aborted) {
     RCLCPP_WARN(get_logger(), "gripper goal %lu aborted: %s", id, why.c_str());
   } else {
     RCLCPP_INFO(get_logger(), "gripper goal %lu %s: %s", id,
       end == GoalEnd::Succeeded ? "succeeded" : "canceled", why.c_str());
   }
-  gripper_goal_ = GripperGoal{};
+  gripper_handle_.reset();
+  gripper_goals_.forget();
 }
 
 void FrRobotHardwareInterface::onGripperActivate(

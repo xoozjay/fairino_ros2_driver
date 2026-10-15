@@ -24,6 +24,7 @@
 #include "control_msgs/action/parallel_gripper_command.hpp"
 #include "diagnostic_msgs/msg/diagnostic_status.hpp"
 #include "fr_robot_driver/arm_gate.hpp"
+#include "fr_robot_driver/gripper_goals.hpp"
 #include "fr_robot_driver/gripper_motion.hpp"
 #include "fr_robot_driver/kinematics.hpp"
 #include "fr_robot_driver/status_report.hpp"
@@ -158,21 +159,15 @@ private:
   // realtime thread sends a goal's MoveGripper and reports how the frame shows its motion ending.
   using GripperAction = control_msgs::action::ParallelGripperCommand;
   using GripperGoalHandle = rclcpp_action::ServerGoalHandle<GripperAction>;
-  struct GripperGoal
-  {
-    std::shared_ptr<GripperGoalHandle> handle;   // none: no goal
-    uint64_t id = 0;
-    uint64_t epoch = 0;                          // gripper_epoch_ when it was accepted
-    fr_client_library::GripperCommand command;
-    bool sent = false;                           // its MoveGripper went out
-  };
   void onGripperGoalAccepted(const std::shared_ptr<GripperGoalHandle> & handle);
   void onGripperGoalTimer();
   // executor thread, gripper_goal_mutex_ held: ends the goal and forgets it
-  enum class GoalEnd { Succeeded, Aborted, Canceled };
-  void finishGripperGoal(GoalEnd end, const std::string & why, bool reached = false, bool stalled = false);
-  std::mutex gripper_goal_mutex_;   // guards gripper_goal_; the realtime thread only try_locks it
-  GripperGoal gripper_goal_;
+  using GoalEnd = fr_robot_driver::GoalEnd;
+  void finishGripperGoal(
+    GoalEnd end, const std::string & why, uint64_t id, bool reached = false, bool stalled = false);
+  std::mutex gripper_goal_mutex_;   // guards gripper_goals_; the realtime thread only try_locks it
+  GripperGoals gripper_goals_;      // the decisions (gripper_goals.hpp)
+  std::shared_ptr<GripperGoalHandle> gripper_handle_;   // the goal being reported on, if any
   uint64_t gripper_goal_ids_ = 0;   // executor thread only
   // Bumped whenever goals accepted before must not run any more: activation and deactivation of
   // the hardware, an error, the gripper becoming unusable, an activation of the gripper.

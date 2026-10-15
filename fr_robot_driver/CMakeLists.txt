@@ -63,6 +63,9 @@ if(BUILD_TESTING)
   ament_add_gtest(test_status_report test/test_status_report.cpp)
   target_link_libraries(test_status_report fr_robot_hardware_interface)
 
+  ament_add_gtest(test_gripper_goals test/test_gripper_goals.cpp)
+  target_link_libraries(test_gripper_goals fr_robot_hardware_interface)
+
   ament_add_gtest(test_gripper_motion test/test_gripper_motion.cpp)
   target_include_directories(test_gripper_motion PRIVATE include)
   target_compile_features(test_gripper_motion PRIVATE cxx_std_17)

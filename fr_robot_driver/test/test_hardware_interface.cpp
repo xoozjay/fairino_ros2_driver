@@ -683,79 +683,15 @@ TEST(Gripper, GoalsSendPositionAndForceAndIgnoreVelocity)
   EXPECT_DOUBLE_EQ(r.state("left_finger_joint/velocity"), 0.0);
   EXPECT_EQ(r.fake.params("MoveGripper").at(0), kMove50);  // 50 % opening, fixed 50 % speed, 20 % force
 
-  h = c.send(0.02);                                  // where it is: sent all the same (a re-grip)
+  h = c.send(0.02, 0.011, 14.0);                    // a velocity is given; it is ignored (G12)
   ASSERT_TRUE(h);
   ASSERT_TRUE(c.result(h));
-  EXPECT_EQ(r.fake.count("MoveGripper"), 2);
-
-  const auto sent = [&](double opening, double velocity, double effort) {
-      auto g = c.send(opening, velocity, effort);
-      EXPECT_TRUE(g && c.result(g));
-      return r.fake.params("MoveGripper").back();
-    };
-  // Velocity is ignored; only effort is converted. Speed stays at the fixed protocol value 50.
-  EXPECT_EQ(sent(0.04, 0.011, 14.0), (std::vector<double>{1, 100, 50, 10, 30000, 1, 0, 0, 0, 0}));
-  // Opening and force beyond their ranges are clamped.
-  EXPECT_EQ(sent(0.08, 1.0, 1000.0), (std::vector<double>{1, 100, 50, 100, 30000, 1, 0, 0, 0, 0}));
-  EXPECT_EQ(sent(-0.01, -1.0, -1.0), (std::vector<double>{1, 0, 50, 20, 30000, 1, 0, 0, 0, 0}));
+  // opening %, the fixed protocol speed 50, the force from 14 N, the SDK's max_time and flags
+  EXPECT_EQ(r.fake.params("MoveGripper").back(), (std::vector<double>{1, 50, 50, 10, 30000, 1, 0, 0, 0, 0}));
   EXPECT_EQ(r.fake.count("ActGripper"), 0);         // never activated by the driver
   ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "gripper_motion_done") == "1";}));
   EXPECT_EQ(Rig::value(r.status(), "gripper_commands"), "<missing>");
   EXPECT_EQ(Rig::value(r.status(), "gripper_object"), "<missing>");   // not observable (G13)
-}
-
-TEST(Gripper, GoalsAreRejectedUnlessTheGripperIsUsableAndOldOnesNeverRun)
-{
-  Rig r("", 125, kWithGripper);                      // just powered up: the gripper is not active
-  ASSERT_TRUE(r.configure());
-  GripperClient c(r);
-  EXPECT_FALSE(c.send(0.02));                        // hardware not active
-  ASSERT_TRUE(r.activate());
-  r.run(3);
-  EXPECT_NEAR(r.state(kFinger), 0.04, 1e-9);         // unknown: the widest outline, not the frame's 0 %
-  EXPECT_FALSE(c.send(0.02));                        // gripper not active
-  const auto [ok, message] = r.trigger("gripper/activate");   // operator
-  ASSERT_TRUE(ok) << message;
-  r.run(5);
-  auto h = c.send(0.0);                              // usable now, no restart of anything needed
-  ASSERT_TRUE(h);
-  ASSERT_TRUE(c.result(h));
-  EXPECT_EQ(r.fake.count("MoveGripper"), 1);
-
-  // a goal waits while the arm moves...
-  auto pan = r.rm->claim_command_interface(kPan);
-  double angle = 0.0;
-  const auto arm_moves = [&] {
-      angle += 0.1 * kDeg;
-      r.cycle([&] {(void)pan.set_value(angle);});
-    };
-  for (int i = 0; i < 5; ++i) {arm_moves();}
-  h = c.send(0.02);
-  ASSERT_TRUE(h);
-  r.fake.edit([](auto & s) {s.gripper_fault = 1;});  // ...and the gripper faults meanwhile
-  auto res = c.result(h, 100, arm_moves);
-  ASSERT_TRUE(res);
-  EXPECT_EQ(res->code, GripperClient::Code::ABORTED);
-  r.fake.edit([](auto & s) {s.gripper_fault = 0;});  // back, and the arm stands: still never sent
-  r.run(60);
-  EXPECT_EQ(r.fake.count("MoveGripper"), 1);
-
-  // the same with a robot fault: the hardware deactivates
-  for (int i = 0; i < 5; ++i) {arm_moves();}
-  h = c.send(0.03);
-  ASSERT_TRUE(h);
-  r.fake.edit([](auto & s) {s.main_code = 1; s.sub_code = 23;});
-  res = c.result(h, 100, arm_moves);
-  ASSERT_TRUE(res);
-  EXPECT_EQ(res->code, GripperClient::Code::ABORTED);
-  EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_INACTIVE);
-  EXPECT_FALSE(c.send(0.03));                        // and new goals are rejected meanwhile
-  r.fake.edit([](auto & s) {s.main_code = 0; s.sub_code = 0;});
-  ASSERT_TRUE(r.reset().first);
-  ASSERT_TRUE(cycleUntil(r, [&] {return r.state("fr_status/fault_class") == 0.0;}));
-  ASSERT_TRUE(r.activate());
-  r.run(60);
-  EXPECT_EQ(r.fake.count("MoveGripper"), 1);
 }
 
 TEST(Gripper, ActivationOnlyOnRequestAndOnlyOnce)
@@ -798,45 +734,6 @@ TEST(Gripper, ActivationOnlyOnRequestAndOnlyOnce)
   EXPECT_FALSE(ok);
   EXPECT_NE(message.find("already active"), std::string::npos) << message;
   EXPECT_EQ(r.fake.count("ActGripper"), 1);
-}
-
-TEST(Gripper, ANewGoalReplacesTheWaitingOneAndWriteNeverWaits)
-{
-  Rig r("", 125, kWithGripper);
-  r.fake.move_gripper_delay_ms = 300;                // the call is in flight for 300 ms
-  startWithGripperAt(r, 100);
-  r.run(10);                                         // the stream pauses
-  GripperClient c(r);
-
-  auto first = c.send(0.01);
-  ASSERT_TRUE(first);
-  ASSERT_TRUE(cycleUntil(r, [&] {return r.state(kScaling) == 0.0;}));   // 25 % went out
-  const auto timed_cycle = [&] {
-      const auto t0 = std::chrono::steady_clock::now();
-      r.cycle();
-      return std::chrono::steady_clock::now() - t0;
-    };
-  EXPECT_LT(timed_cycle(), 50ms);                    // a cycle includes an 8 ms sleep
-  auto second = c.send(0.02);                        // replaces the first: the controller cannot
-  ASSERT_TRUE(second);                               // interrupt its motion, so it waits (G15)
-  EXPECT_LT(timed_cycle(), 50ms);
-  auto third = c.send(0.03);                         // replaces the second before it went out
-  ASSERT_TRUE(third);
-  EXPECT_LT(timed_cycle(), 50ms);
-
-  auto res = c.result(first);
-  ASSERT_TRUE(res);
-  EXPECT_EQ(res->code, GripperClient::Code::ABORTED);
-  res = c.result(second);
-  ASSERT_TRUE(res);
-  EXPECT_EQ(res->code, GripperClient::Code::ABORTED);
-  res = c.result(third);
-  ASSERT_TRUE(res);
-  EXPECT_EQ(res->code, GripperClient::Code::SUCCEEDED);
-  const auto sent = r.fake.params("MoveGripper");
-  ASSERT_EQ(sent.size(), 2u);
-  EXPECT_EQ(sent[0][1], 25);
-  EXPECT_EQ(sent[1][1], 75);                         // 50 % never went out
 }
 
 TEST(HardwareInterface, TheStreamPausesWhileTheArmStandsAndResumesWithAPrefill)
@@ -902,30 +799,6 @@ TEST(Gripper, TrajectoriesPauseWhileTheGripperIsBusy)
   EXPECT_NEAR(r.state(kFinger), 0.02, 1e-9);         // ...until the frame shows it done
 }
 
-TEST(Gripper, AGoalWaitsForTheArmToStand)
-{
-  Rig r("", 125, kWithGripper);
-  startWithGripperAt(r, 100);
-  GripperClient c(r);
-  auto pan = r.rm->claim_command_interface(kPan);
-  r.cycle([&] {(void)pan.set_value(0.5 * kDeg);});   // the arm moves...
-  auto h = c.send(0.0);                              // ...when the gripper is asked to close
-  ASSERT_TRUE(h);
-  for (int i = 2; i <= 40; ++i) {                    // well past when it could have gone out: it waits
-    r.cycle([&] {(void)pan.set_value(i * 0.5 * kDeg);});
-  }
-  EXPECT_EQ(r.fake.count("MoveGripper"), 0);
-  const auto status = h->get_status();               // not ended, not timed out
-  EXPECT_TRUE(status == action_msgs::msg::GoalStatus::STATUS_ACCEPTED ||
-    status == action_msgs::msg::GoalStatus::STATUS_EXECUTING) << static_cast<int>(status);
-  auto res = c.result(h);                            // once it stands
-  ASSERT_TRUE(res);
-  EXPECT_EQ(res->code, GripperClient::Code::SUCCEEDED);
-  EXPECT_EQ(r.fake.count("MoveGripper"), 1);
-  EXPECT_EQ(r.fake.move_gripper_while_streaming, 0);
-  EXPECT_EQ(r.fake.params("MoveGripper")[0][1], 0);
-}
-
 TEST(Gripper, AnArmCommandWaitsWhileTheGripperMovesAndGoesOnRightAfter)
 {
   Rig r("", 125, kWithGripper);
@@ -984,113 +857,6 @@ TEST(Gripper, AControllerThatIgnoresThePauseEndsInTheStepCheck)
   ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "fault_class") == "1";}));
   EXPECT_NE(r.status().message.find("step check"), std::string::npos) << r.status().message;
   EXPECT_EQ(r.fake.servoj_while_gripper_moves, 0);
-}
-
-TEST(Gripper, AFailedCallKeepsTheArmStillUntilTheFrameShowsTheGripperDone)
-{
-  Rig r("", 125, kWithGripper);
-  r.fake.move_gripper_delay_ms = 1200;   // past the call's 1 s timeout: it fails, the gripper moves anyway
-  r.fake.gripper_motion_ms = 600;
-  startWithGripperAt(r, 100);
-  GripperClient c(r);
-  auto pan = r.rm->claim_command_interface(kPan);
-  ASSERT_TRUE(c.send(0.02));
-  ASSERT_TRUE(cycleUntil(r, [&] {
-      return Rig::value(r.status(), "gripper_command_failures") == "1";}, 250));
-  EXPECT_EQ(Rig::value(r.status(), "gripper_busy"), "1");
-  const auto before = r.fake.servoJ().size();
-  for (int i = 1; i <= 20; ++i) {                    // a trajectory starts after the failure
-    r.cycle([&] {(void)pan.set_value(i * 0.05 * kDeg);});
-  }
-  EXPECT_EQ(r.fake.servoJ().size(), before);         // still not sent: the gripper may be moving
-  ASSERT_TRUE(cycleUntil(r, [&] {return Rig::value(r.status(), "gripper_busy") == "0";}, 250));
-  EXPECT_EQ(r.fake.count("MoveGripper"), 1);
-  EXPECT_NEAR(r.state(kFinger), 0.02, 1e-9);
-  EXPECT_EQ(r.fake.servoj_while_gripper_moves, 0);
-
-  r.cycle([&] {(void)pan.set_value(0.0);});          // within a step of where the arm stands: accepted
-  for (int i = 1; i <= 20; ++i) {
-    r.cycle([&] {(void)pan.set_value(i * 0.5 * kDeg);});
-  }
-  EXPECT_GT(r.fake.servoJ().size(), before + 15);
-  EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_ACTIVE);
-}
-
-TEST(Gripper, AGraspSucceedsAsStalledAndALossOnTheWayAborts)
-{
-  Rig r("", 125, kWithGripper);
-  r.fake.gripper_object_at = 27;                     // an object between the fingers
-  r.fake.gripper_motion_ms = 300;
-  startWithGripperAt(r, 100);
-  GripperClient c(r);
-
-  auto h = c.send(0.0);                              // close on it (sdk_quirks G13: done = 2)
-  ASSERT_TRUE(h);
-  auto res = c.result(h);
-  ASSERT_TRUE(res);
-  EXPECT_EQ(res->code, GripperClient::Code::SUCCEEDED);
-  EXPECT_TRUE(res->result->stalled);
-  EXPECT_FALSE(res->result->reached_goal);
-  EXPECT_NEAR(res->result->state.position.at(0), 0.0108, 1e-9);   // 27 %
-  EXPECT_EQ(r.state(kScaling), 1.0);                 // the arm is free at once
-  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "gripper_motion_done") == "2";}));
-
-  r.fake.gripper_object_at = -1;
-  h = c.send(0.04);                                  // opens from there (2 -> 0 -> 1)
-  ASSERT_TRUE(h);
-  res = c.result(h);
-  ASSERT_TRUE(res);
-  EXPECT_EQ(res->code, GripperClient::Code::SUCCEEDED);
-  EXPECT_TRUE(res->result->reached_goal);
-
-  r.fake.gripper_motion_ms = 600;                    // a drop while the goal's motion runs
-  h = c.send(0.0);
-  ASSERT_TRUE(h);
-  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 3;}));
-  r.run(10);
-  r.fake.edit([](auto & s) {s.gripper_motiondone = 3;});
-  res = c.result(h);
-  ASSERT_TRUE(res);
-  EXPECT_EQ(res->code, GripperClient::Code::ABORTED);
-}
-
-TEST(Gripper, ACanceledGoalNeverRunsAndASentOneRunsToItsEnd)
-{
-  Rig r("", 125, kWithGripper);
-  r.fake.gripper_motion_ms = 600;
-  startWithGripperAt(r, 100);
-  GripperClient c(r);
-  auto pan = r.rm->claim_command_interface(kPan);
-  double angle = 0.0;
-  const auto arm_moves = [&] {
-      angle += 0.1 * kDeg;
-      r.cycle([&] {(void)pan.set_value(angle);});
-    };
-
-  for (int i = 0; i < 5; ++i) {arm_moves();}
-  auto h = c.send(0.0);                              // waits for the arm
-  ASSERT_TRUE(h);
-  for (int i = 0; i < 5; ++i) {arm_moves();}
-  ASSERT_TRUE(c.cancel(h));
-  auto res = c.result(h, 100, arm_moves);
-  ASSERT_TRUE(res);
-  EXPECT_EQ(res->code, GripperClient::Code::CANCELED);
-  r.run(60);                                         // the arm stands: still nothing
-  EXPECT_EQ(r.fake.count("MoveGripper"), 0);
-
-  h = c.send(0.0);
-  ASSERT_TRUE(h);
-  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 1;}));
-  r.run(5);
-  ASSERT_TRUE(c.cancel(h));
-  res = c.result(h, 20);
-  ASSERT_TRUE(res);                                  // at once, while the motion runs on (G15)
-  EXPECT_EQ(res->code, GripperClient::Code::CANCELED);
-  EXPECT_EQ(r.state(kScaling), 0.0);
-  ASSERT_TRUE(cycleUntil(r, [&] {return r.state(kScaling) == 1.0;}));
-  EXPECT_NEAR(r.state(kFinger), 0.0, 1e-9);
-  r.run(30);
-  EXPECT_EQ(r.fake.count("MoveGripper"), 1);
 }
 
 int main(int argc, char ** argv)
