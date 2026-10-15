@@ -42,17 +42,18 @@ controller_manager:
     speed_scaling:
       state_interface: __PREFIX__speed_scaling/speed_scaling_factor
     # A goal must be reached within 0.005 rad, at most 0.5 s after the trajectory's end, and the
-    # arm must follow within 0.26 rad on the way. 0.26 rad = twice the fastest joint of any model
-    # (3.2 rad/s) times the normal following lag (prefill * cmdT + round trip, about 40 ms).
+    # arm must follow within 0.85 rad on the way: only a real following failure trips it. The arm
+    # follows the command about 116-133 ms late at any speed (sdk_quirks S19), so the error is speed
+    # times that; 0.85 rad = twice the fastest joint of any model (3.2 rad/s) times 133 ms.
     constraints:
       stopped_velocity_tolerance: 0.01
       goal_time: 0.5
-      __PREFIX__shoulder_pan_joint: {trajectory: 0.26, goal: 0.005}
-      __PREFIX__shoulder_lift_joint: {trajectory: 0.26, goal: 0.005}
-      __PREFIX__elbow_joint: {trajectory: 0.26, goal: 0.005}
-      __PREFIX__wrist_1_joint: {trajectory: 0.26, goal: 0.005}
-      __PREFIX__wrist_2_joint: {trajectory: 0.26, goal: 0.005}
-      __PREFIX__wrist_3_joint: {trajectory: 0.26, goal: 0.005}
+      __PREFIX__shoulder_pan_joint: {trajectory: 0.85, goal: 0.005}
+      __PREFIX__shoulder_lift_joint: {trajectory: 0.85, goal: 0.005}
+      __PREFIX__elbow_joint: {trajectory: 0.85, goal: 0.005}
+      __PREFIX__wrist_1_joint: {trajectory: 0.85, goal: 0.005}
+      __PREFIX__wrist_2_joint: {trajectory: 0.85, goal: 0.005}
+      __PREFIX__wrist_3_joint: {trajectory: 0.85, goal: 0.005}
 
 # Mock only, with gripper:=pgi140 (fr_control.launch.py); real hardware provides the same action
 # from the plugin. Opening = travel of one jaw, 0 (closed)
