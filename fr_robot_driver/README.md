@@ -96,8 +96,10 @@ ros2_control 状态接口只有 `<tf_prefix>fr_status/fault_class` 与 `<tf_pref
 
 真机 action 的语义：
 
-- **结果**：状态帧先报未完成（0）、再报非 0 即运动结束（G13）。1 到位：SUCCEEDED（`reached_goal`）；2 夹住物体：
-  SUCCEEDED 且 `stalled = true`；3 物体掉落或其他值：ABORTED。发出后 1.5 s 未见运动开始、或 30 s 未完成：ABORTED。
+- **结果**：`motion_done` 是一次运动内锁存的两个标志位，0x01 到达目标、0x02 途中受阻（G13）。运动结束 = 帧报过 0
+  之后，标志位非 0、且标志位与开度至少 300 ms 未变（新运动开始后帧里会短暂再现上一次的标志位，G17），目标不为 0 %
+  时开度也不为 0 %。1 到位：SUCCEEDED（`reached_goal`）；2 夹住物体：SUCCEEDED 且 `stalled = true`；3 先受阻后到达，
+  即运动中失去了物体：ABORTED；其他值同样 ABORTED。发出后 1.5 s 未见运动开始、或 30 s 未完成：ABORTED。
   结果里的 `state.position` 为结束时的开度
 - **夹住之后不可观测**：标志位只在运动时限内更新，之后物体掉落、被取走，帧都照报 2（G13）；驱动没有别的传感器，
   不报告"是否仍夹着"

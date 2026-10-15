@@ -134,6 +134,11 @@ public:
   // After "done" the frame keeps saying 0 % for this long before the opening shows (sdk_quirks G14:
   // about 200 ms after a motion to where the gripper already was).
   std::atomic<int> gripper_zero_after_done_ms{0};
+  // From this long after a MoveGripper (-1: never), for gripper_stale_ms, the frame shows the previous
+  // motion's motion_done again, with the opening gripper_stale_position (-1: the reset's 0 %), G17.
+  std::atomic<int> gripper_stale_from_ms{-1};
+  std::atomic<int> gripper_stale_ms{200};
+  std::atomic<int> gripper_stale_position{-1};
   // The servo queue: every ServoJ is one 8 ms segment, played in turn; the frame's mc_queue_len is
   // what is left (plus whatever a test sets). What a real controller would hold back: MoveGripper
   // while segments are left (G8), and ServoJ while the gripper moves (G9). Tests expect both 0.
@@ -243,8 +248,13 @@ private:
       if (!((st_.gripper_active >> (static_cast<int>(p[0]) - 1)) & 1u)) {
         return i4(73);   // not active: ERR_GRIPPER_MOTION (G4, G11)
       }
+      gripper_old_done_ = st_.gripper_motiondone;
       st_.gripper_position = 0;    // G10
       gripper_shows_at_.reset();
+      gripper_stale_at_.reset();
+      if (gripper_stale_from_ms.load() >= 0) {
+        gripper_stale_at_ = now + std::chrono::milliseconds(gripper_stale_from_ms.load());
+      }
       st_.gripper_motiondone = 0;
       gripper_target_ = static_cast<uint8_t>(p[1]);
       gripper_arrives_at_ = now + std::chrono::milliseconds(gripper_motion_ms.load());
@@ -305,6 +315,18 @@ private:
             st_.gripper_position = 0;      // fully open, but the frame does not know (G5)
             st_.gripper_motiondone = 0;
             gripper_activates_at_.reset();
+          }
+          if (gripper_stale_at_ && gripper_arrives_at_) {
+            const auto t = std::chrono::steady_clock::now();
+            if (t >= *gripper_stale_at_ + std::chrono::milliseconds(gripper_stale_ms.load())) {
+              st_.gripper_motiondone = 0;           // the new motion's flags at last
+              st_.gripper_position = 0;
+              gripper_stale_at_.reset();
+            } else if (t >= *gripper_stale_at_) {
+              st_.gripper_motiondone = gripper_old_done_;
+              st_.gripper_position = gripper_stale_position.load() < 0 ? 0 :
+                static_cast<uint8_t>(gripper_stale_position.load());
+            }
           }
           if (gripper_arrives_at_ && std::chrono::steady_clock::now() >= *gripper_arrives_at_) {
             const int object = gripper_object_at.load();
@@ -391,6 +413,8 @@ private:
   int gripper_bit_ = 0;
   std::optional<std::chrono::steady_clock::time_point> gripper_arrives_at_;
   std::optional<std::chrono::steady_clock::time_point> gripper_shows_at_;
+  std::optional<std::chrono::steady_clock::time_point> gripper_stale_at_;
+  uint8_t gripper_old_done_ = 0;
   uint8_t gripper_target_ = 0;
   std::chrono::steady_clock::time_point queue_end_{};   // when the last queued segment is played
   std::atomic<int> stops_{0};

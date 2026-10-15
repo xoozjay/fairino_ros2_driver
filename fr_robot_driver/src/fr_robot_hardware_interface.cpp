@@ -42,6 +42,9 @@ constexpr double kStillDegPerS = 0.5;  // the arm counts as standing still below
 // standing, the readback stays within 0.002 deg)
 constexpr double kAtRestDeg = 0.01;
 constexpr auto kGripperActivationTimeout = std::chrono::seconds(3);
+// A motion's end must stand this long in the frame: the gripper's state is refreshed every 0.2-0.4 s,
+// and right after a command the previous motion's flags come back for a refresh or two (G17).
+constexpr auto kGripperSettle = std::chrono::milliseconds(300);
 
 // A command value [unit] as a MoveGripper percent in [1, 100]; `fallback` if it gives none (<= 0).
 int gripperPercent(double value, double per_percent, int fallback)
@@ -870,15 +873,26 @@ void FrRobotHardwareInterface::readGripper(const StateSnapshot & snap, FaultClas
   }
   gripper_was_active_ = active;
 
-  // The motion we sent: done once the frame has shown "not done" (0) and then anything else: 1 at
-  // the target, 2 an object grasped, 3 an object dropped (sdk_quirks G13). A failed MoveGripper
-  // call (an error, or no answer in time) does not count: the controller may still run it, e.g.
-  // once the servo stream stops (G8), so only the frame says it is over.
+  // The motion we sent. motion_done holds two flags of the motion (sdk_quirks G13): 0x01 at the
+  // target, 0x02 blocked on the way; so 1 reached, 2 an object grasped, 3 an object lost on the way.
+  // It is over once the frame has shown 0 (the reset when the motion starts, G10) and then flags
+  // that stay, with the opening, for kGripperSettle: right after the reset the previous motion's
+  // flags come back for a refresh or two (G17), with the reset's 0 % or an opening still changing.
+  // A failed MoveGripper call (an error, or no answer in time) does not count: the controller may
+  // still run it, e.g. once the servo stream stops (G8), so only the frame says it is over.
   if (gripper_busy_.load() == GripperBusy::Moving) {
-    const auto since = std::chrono::steady_clock::now() - gripper_posted_at_;
+    const auto now = std::chrono::steady_clock::now();
+    const auto since = now - gripper_posted_at_;
     const int done_value = s.gripper_motiondone;
     gripper_seen_running_ = gripper_seen_running_ || done_value == 0;
-    const bool done = gripper_seen_running_ && done_value != 0;
+    const int frame_state = done_value * 1000 + s.gripper_position;   // flags and opening together
+    if (frame_state != gripper_frame_state_) {
+      gripper_frame_state_ = frame_state;
+      gripper_frame_state_since_ = now;
+    }
+    const bool settled = now - gripper_frame_state_since_ >= kGripperSettle;
+    const bool plausible = gripper_sent_position_ == 0 || s.gripper_position != 0;
+    const bool done = gripper_seen_running_ && done_value != 0 && settled && plausible;
     const bool never_started = !gripper_seen_running_ && since > std::chrono::milliseconds(1500);
     const bool timed_out = since > std::chrono::seconds(30);
     if (timed_out) {
@@ -954,6 +968,8 @@ void FrRobotHardwareInterface::writeGripper(bool arm_moves)
   if (gripper_sender_->post(goal.command)) {   // never blocks; busy this instant: again next cycle
     goal.sent = true;
     gripper_awaiting_nonzero_ = goal.command.position != 0;
+    gripper_sent_position_ = goal.command.position;
+    gripper_frame_state_ = -1;
     gripper_sent_id_ = goal.id;
     gripper_posted_at_ = std::chrono::steady_clock::now();
     gripper_seen_running_ = false;

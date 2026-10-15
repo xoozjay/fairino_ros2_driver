@@ -153,6 +153,9 @@ private:
   // realtime thread only:
   std::chrono::steady_clock::time_point gripper_posted_at_{};
   bool gripper_seen_running_ = false;      // the frame showed motion_done = 0 since the post
+  int gripper_sent_position_ = 0;          // percent, the motion in progress
+  int gripper_frame_state_ = -1;           // motion_done * 1000 + opening %, as last seen
+  std::chrono::steady_clock::time_point gripper_frame_state_since_{};
   int stream_idle_frames_ = 0;             // consecutive reads: stream paused, firmware queue empty
   double gripper_known_ = -1.0;            // last opening [m] the frame reported; -1: none yet
   bool gripper_known_from_activation_ = false;

@@ -1167,6 +1167,33 @@ TEST(Gripper, AGraspSucceedsAsStalledAndALossOnTheWayAborts)
   EXPECT_EQ(res->code, GripperClient::Code::ABORTED);
 }
 
+// Right after a command the previous motion's flags come back for a refresh or two (sdk_quirks
+// G17): with an opening that looks real, and with the reset's 0 % for longer than the settle time.
+// Neither ends the motion: the arm stays paused until the gripper is really there.
+TEST(Gripper, ThePreviousFlagsComingBackAreNotTheEnd)
+{
+  for (const auto & [stale_position, stale_ms] : {std::pair{50, 200}, std::pair{-1, 500}}) {
+    Rig r("", 125, kWithGripper);
+    r.fake.gripper_motion_ms = 1200;
+    r.fake.gripper_stale_from_ms = 300;
+    r.fake.gripper_stale_ms = stale_ms;
+    r.fake.gripper_stale_position = stale_position;
+    startWithGripperAt(r, 50);                       // done = 1 from the last motion
+    GripperClient c(r);
+    auto h = c.send(0.04);
+    ASSERT_TRUE(h);
+    ASSERT_TRUE(cycleUntil(r, [&] {return r.state(kScaling) == 0.0;}));
+    ASSERT_TRUE(cycleUntil(r, [&] {return r.state(kScaling) == 1.0;}, 250));
+    const auto frame = r.fake.state();               // the pause ends only once it has arrived
+    EXPECT_EQ(frame.gripper_position, 100) << stale_position;
+    EXPECT_EQ(frame.gripper_motiondone, 1) << stale_position;
+    auto res = c.result(h);
+    ASSERT_TRUE(res);
+    EXPECT_EQ(res->code, GripperClient::Code::SUCCEEDED);
+    EXPECT_NEAR(res->result->state.position.at(0), 0.04, 1e-9);
+  }
+}
+
 TEST(Gripper, ACanceledGoalNeverRunsAndASentOneRunsToItsEnd)
 {
   Rig r("", 125, kWithGripper);
