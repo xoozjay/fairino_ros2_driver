@@ -346,3 +346,6 @@ Approach 第 1–6 步完成，每步一个提交、各自通过 `scripts/check.
 误用时的兜底保留，由 A、B 组覆盖。D6/D7（路径容差 0.85 rad 在高速下不误报、滞后组成）未做，容差依据仍是实测滞后
 116–133 ms（S19）。最后一次 check：194 tests, 0 failures, 4 skipped。
 
+**维护者补充（2026-10-15）**：标志位可变化的时限就是 `MoveGripper` 的 `max_time`；试验 A（`max_time` 10 s，15.9 s 抽走仍报 3）
+与此不符，判定该次记录有误，原因未查明。`MoveGripper` 的速度参数无效（sdk_quirks G12 更正）。
+
