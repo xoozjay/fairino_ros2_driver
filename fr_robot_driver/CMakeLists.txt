@@ -57,8 +57,9 @@ if(BUILD_TESTING)
   target_compile_features(test_arm_gate PRIVATE cxx_std_17)
   target_compile_options(test_arm_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
-  ament_add_gtest(test_reset_policy test/test_reset_policy.cpp)
-  target_link_libraries(test_reset_policy fr_robot_hardware_interface)
+  ament_add_gtest(test_preconditions test/test_preconditions.cpp)
+  target_link_libraries(test_preconditions fr_robot_hardware_interface)
+  target_include_directories(test_preconditions PRIVATE include)
 
   ament_add_gtest(test_status_report test/test_status_report.cpp)
   target_link_libraries(test_status_report fr_robot_hardware_interface)

@@ -63,7 +63,6 @@ private:
   void logFault(fr_client_library::FaultClass fc, const std::string & detail);
   // Does the state frame's flange_cur_pos agree with our FK of its jt_cur_pos? Wrong robot model,
   // wrong zero offsets or sign conventions show up here (docs/fault_handling.md section 8).
-  bool flangeConsistent(const fr_client_library::RobotState384 & s, std::string & why) const;
   void closeConnections();
   // on_deactivate/on_error run inside ResourceManager::write()/read(), i.e. on the realtime thread:
   // they must not block, so the network part of shutting down happens on this short-lived thread.

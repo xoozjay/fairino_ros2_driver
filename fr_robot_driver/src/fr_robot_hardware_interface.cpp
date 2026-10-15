@@ -7,7 +7,7 @@
 #include <iterator>
 #include <optional>
 
-#include "fr_robot_driver/reset_policy.hpp"
+#include "fr_robot_driver/preconditions.hpp"
 #include "hardware_interface/lexical_casts.hpp"
 #include "hardware_interface/types/hardware_interface_type_values.hpp"
 #include "pluginlib/class_list_macros.hpp"
@@ -84,13 +84,13 @@ CallbackReturn FrRobotHardwareInterface::on_init(
         [&](const auto * n) {return has(c->state_interfaces, n);});
     };
 
-  // ---- optional gripper joint: opening [m] commanded with max_effort [N] ----
+  // ---- optional gripper joint: the opening is a state interface (joint_states, TF); the gripper
+  // moves over the plugin's own action, not through command interfaces (README "夹爪") ----
   gripper_joint_ = param("gripper_joint", "");
   if (hasGripper()) {
-    if (!interfaces(info.joints, gripper_joint_, {"position", "max_effort"}, {"position", "velocity"}))
-    {
-      RCLCPP_ERROR(log, "gripper joint '%s': need commands 'position', 'max_effort' "
-        "and states 'position', 'velocity'", gripper_joint_.c_str());
+    if (!interfaces(info.joints, gripper_joint_, {}, {"position", "velocity"})) {
+      RCLCPP_ERROR(log, "gripper joint '%s': need states 'position' and 'velocity'",
+        gripper_joint_.c_str());
       return CallbackReturn::ERROR;
     }
   }
@@ -328,36 +328,22 @@ CallbackReturn FrRobotHardwareInterface::on_configure(const rclcpp_lifecycle::St
       RCLCPP_INFO(log, "controller: model %s, software %s, controller version %s",
         info.value.robot_model.c_str(), info.value.software_version.c_str(),
         info.value.controller_version.c_str());
-      if (!fr_client_library::isVerifiedVersion(version)) {
-        if (!allow_unverified_version_) {
-          RCLCPP_ERROR(log, "software version %s is not verified with this driver "
-            "(set allow_unverified_version to run anyway)", info.value.software_version.c_str());
-          return CallbackReturn::FAILURE;
-        }
-        RCLCPP_WARN(log, "software version %s is NOT verified, running anyway",
-          info.value.software_version.c_str());
-      }
-      if (fr_client_library::stateFrameSize(version) == 0) {
-        RCLCPP_ERROR(log, "no known state frame size for software version %s",
-          info.value.software_version.c_str());
+      // Which software, which robot, which frame size? (preconditions.hpp)
+      const Verdict version_ok = checkVersion(info.value.version, allow_unverified_version_);
+      if (!version_ok.ok) {
+        RCLCPP_ERROR(log, "%s", version_ok.message.c_str());
         return CallbackReturn::FAILURE;
       }
-
-      // Which robot is it? The URDF (limits, kinematics) was built for model_.
-      if (const char * described = fr_client_library::descriptionModelFor(info.value.robot_model)) {
-        if (model_ != described) {
-          RCLCPP_ERROR(log, "the controller is a %s (%s) but this URDF was built for %s",
-            info.value.robot_model.c_str(), described, model_.c_str());
-          return CallbackReturn::FAILURE;
-        }
-      } else if (!allow_unknown_model_) {
-        RCLCPP_ERROR(log, "controller model '%s' is not one this driver has kinematics for "
-          "(allow_unknown_model:=true to run anyway; the flange check still applies)",
-          info.value.robot_model.c_str());
+      if (version_ok.warn) {
+        RCLCPP_WARN(log, "%s", version_ok.message.c_str());
+      }
+      const Verdict model_ok = checkModel(info.value.robot_model, model_, allow_unknown_model_);
+      if (!model_ok.ok) {
+        RCLCPP_ERROR(log, "%s", model_ok.message.c_str());
         return CallbackReturn::FAILURE;
-      } else {
-        RCLCPP_WARN(log, "controller model '%s' is unknown, assuming %s",
-          info.value.robot_model.c_str(), model_.c_str());
+      }
+      if (model_ok.warn) {
+        RCLCPP_WARN(log, "%s", model_ok.message.c_str());
       }
 
       // state period: set and read back (the controller refuses < 8 ms)
@@ -383,11 +369,17 @@ CallbackReturn FrRobotHardwareInterface::on_configure(const rclcpp_lifecycle::St
     }
     {
       StateSnapshot first;
-      std::string why;
-      if (!receiver_->latest(first) || !flangeConsistent(first.state, why)) {
-        RCLCPP_ERROR(log, "flange check failed: %s", why.c_str());
-        closeConnections();
-        return CallbackReturn::FAILURE;
+      if (receiver_->latest(first) && fk_check_) {
+        // The flange check runs again here (it ran in on_activate for the startup case): the robot
+        // may have been re-installed while the driver was down. Faults are no reason to refuse
+        // configure: the operator resets them from here.
+        const Verdict flange = checkFlange(first.state, kinematics_, fk_position_tolerance_mm_,
+          fk_angle_tolerance_deg_, model_.c_str());
+        if (!flange.ok) {
+          RCLCPP_ERROR(log, "%s", flange.message.c_str());
+          closeConnections();
+          return CallbackReturn::FAILURE;
+        }
       }
       // What the controller assumes is mounted. Read only: the driver never writes it.
       const int tool = first.state.tool;
@@ -448,19 +440,15 @@ CallbackReturn FrRobotHardwareInterface::on_activate(const rclcpp_lifecycle::Sta
   // receiver, which any thread may read: on_activate may run before the first read() (startup).
   StateSnapshot snap;
   receiver_->latest(snap);
-  if (!snap.fresh(comm_timeout_)) {
-    RCLCPP_ERROR(log, "cannot activate: no fresh state frame");
+  const Verdict ok = checkActivatable(snap.state, snap.fresh(comm_timeout_),
+    fk_check_ ? &kinematics_ : nullptr, fk_position_tolerance_mm_, fk_angle_tolerance_deg_,
+    model_.c_str());
+  if (!ok.ok) {
+    RCLCPP_ERROR(log, "cannot activate: %s", ok.message.c_str());
     return CallbackReturn::FAILURE;
   }
-  if (const FaultClass fc = fr_client_library::classifyState(snap.state); fc != FaultClass::None) {
-    RCLCPP_ERROR(log, "cannot activate: %s (%s)", fr_client_library::toString(fc),
-      fr_client_library::describeFault(snap.state).c_str());
-    return CallbackReturn::FAILURE;
-  }
-
-  if (std::string why; !flangeConsistent(snap.state, why)) {
-    RCLCPP_ERROR(log, "cannot activate: flange check failed: %s", why.c_str());
-    return CallbackReturn::FAILURE;
+  if (!ok.message.empty()) {
+    RCLCPP_INFO(log, "%s", ok.message.c_str());
   }
 
   JointArray actual;
@@ -546,31 +534,6 @@ CallbackReturn FrRobotHardwareInterface::on_error(const rclcpp_lifecycle::State 
   }
   startCleanup(false, true);
   return CallbackReturn::SUCCESS;  // -> UNCONFIGURED
-}
-
-bool FrRobotHardwareInterface::flangeConsistent(const RobotState384 & s, std::string & why) const
-{
-  if (!fk_check_) {
-    return true;
-  }
-  std::array<double, 6> q;
-  double flange[6];  // copies: the frame is packed
-  for (int i = 0; i < 6; ++i) {
-    q[i] = s.jt_cur_pos[i];
-    flange[i] = s.flange_cur_pos[i];
-  }
-  const FlangeMismatch m = compareFlange(kinematics_, q, flange);
-  if (m.position_mm <= fk_position_tolerance_mm_ && m.angle_deg <= fk_angle_tolerance_deg_) {
-    RCLCPP_INFO(get_logger(), "flange check: %.3f mm / %.4f deg from FK (limits %.3f mm / %.3f deg)",
-      m.position_mm, m.angle_deg, fk_position_tolerance_mm_, fk_angle_tolerance_deg_);
-    return true;
-  }
-  why = "the controller's flange pose is " + std::to_string(m.position_mm) + " mm / " +
-    std::to_string(m.angle_deg) + " deg away from the forward kinematics of " + model_ +
-    " (limits " + std::to_string(fk_position_tolerance_mm_) + " mm / " +
-    std::to_string(fk_angle_tolerance_deg_) + " deg): wrong robot model, joint zero offsets or "
-    "installation? (fk_check:=false to disable)";
-  return false;
 }
 
 void FrRobotHardwareInterface::startCleanup(bool send_stop, bool close_all)
@@ -938,35 +901,21 @@ void FrRobotHardwareInterface::onGripperActivate(
       response->message = why;
       RCLCPP_WARN(log, "gripper activation refused: %s", why.c_str());
     };
-  std::lock_guard<std::mutex> lock(api_mutex_);   // its own XML-RPC connection, as reset_error
+  // The checks read the receiver and the state, which any thread may read; only the ActGripper call
+  // needs the XML-RPC connection (as reset_error). Holding it while waiting for the activation bit
+  // would block reset_error and the callbacks that share this callback group.
   StateSnapshot snap;
-  if (!configured_.load()) {
-    return refuse("hardware not configured");
-  }
   receiver_->latest(snap);
-  if (!snap.fresh(comm_timeout_)) {
-    return refuse("no fresh state frame");
-  }
-  const RobotState384 & s = snap.state;
-  if (const FaultClass fc = fr_client_library::classifyState(s); fc != FaultClass::None) {
-    return refuse(std::string(fr_client_library::toString(fc)) + ": " +
-             fr_client_library::describeFault(s));
-  }
-  if (const ProtectiveStop stop = protective_stop_.load(); stop != ProtectiveStop::None) {
-    return refuse(toString(stop));
-  }
-  // A gripper fault is no reason to refuse: activating is what clears it (sdk_quirks G11)
-  if (gripperActive(s)) {
-    return refuse("gripper " + std::to_string(gripper_index_) + " is already active");
-  }
+  std::array<double, 6> joint_velocity{};
   for (int i = 0; i < 6; ++i) {
-    if (std::abs(s.actual_qd[i]) > kStillDegPerS) {
-      return refuse("the arm is moving");
-    }
+    joint_velocity[i] = snap.state.actual_qd[i];
   }
-  // While ServoJ flows the controller holds gripper commands back (sdk_quirks G8)
-  if (active_.load() && !sender_->paused()) {
-    return refuse("the arm is being commanded (servo stream running)");
+  const std::string why = refuseGripperActivation(configured_.load(), snap.frame_count ?
+    &snap.state : nullptr, snap.fresh(comm_timeout_),
+    protective_stop_.load() != ProtectiveStop::None, gripperActive(snap.state), joint_velocity,
+    kStillDegPerS, active_.load() && !sender_->paused());
+  if (!why.empty()) {
+    return refuse(why);
   }
   auto idle = GripperBusy::Idle;
   if (!gripper_busy_.compare_exchange_strong(idle, GripperBusy::Activating)) {
@@ -976,25 +925,29 @@ void FrRobotHardwareInterface::onGripperActivate(
   ++gripper_epoch_;
 
   RCLCPP_WARN(log, "activating gripper %d: it opens to its full stroke", gripper_index_);
+  {
+    std::lock_guard<std::mutex> lock(api_mutex_);
+    if (const auto st = api_->actGripper(gripper_index_); !st.ok()) {
+      refuse("ActGripper failed (error " + std::to_string(static_cast<int>(st.error)) +
+        ", code " + std::to_string(st.code) + ")");
+      gripper_busy_ = GripperBusy::Idle;
+      return;
+    }
+  }
   bool ok = false;
-  if (const auto st = api_->actGripper(gripper_index_); !st.ok()) {
-    refuse("ActGripper failed (error " + std::to_string(static_cast<int>(st.error)) +
-      ", code " + std::to_string(st.code) + ")");
+  const auto deadline = std::chrono::steady_clock::now() + kGripperActivationTimeout;
+  while (!ok && std::chrono::steady_clock::now() < deadline) {
+    ok = receiver_->latest(snap) && gripperActive(snap.state) && snap.state.gripper_fault == 0;
+    if (!ok) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+  }
+  if (ok) {
+    response->success = true;
+    response->message = "gripper " + std::to_string(gripper_index_) + " active (fully open)";
+    RCLCPP_INFO(log, "%s", response->message.c_str());
   } else {
-    const auto deadline = std::chrono::steady_clock::now() + kGripperActivationTimeout;
-    while (!ok && std::chrono::steady_clock::now() < deadline) {
-      ok = receiver_->latest(snap) && gripperActive(snap.state) && snap.state.gripper_fault == 0;
-      if (!ok) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-      }
-    }
-    if (ok) {
-      response->success = true;
-      response->message = "gripper " + std::to_string(gripper_index_) + " active (fully open)";
-      RCLCPP_INFO(log, "%s", response->message.c_str());
-    } else {
-      refuse("ActGripper was accepted but the gripper did not report active within 3 s");
-    }
+    refuse("ActGripper was accepted but the gripper did not report active within 3 s");
   }
   gripper_busy_ = GripperBusy::Idle;
 }
