@@ -1,6 +1,6 @@
 # 伺服跟随滞后影响分析、JTC 轨迹取消跳变保护与延迟优化
 
-- Status: approved（维护者已批准：取消时平滑减速至静止、保持 active；不使用 8080 STOP 避免加速度突变；保持 kLead=3 不做无谓微调）
+- Status: done（平滑刹车过渡已实现并通过测试；正向控制测试确认异常跳变仍被有效拦截；check.sh 204 tests 全绿）
 
 ## Goal
 
@@ -138,4 +138,22 @@ $v \times \tau$，单靠开启 `decelerate_on_cancel` 无法避开第一步的�
 
 ## Result
 
-（未开始）
+**实施与验证完成（2026-10-15）**：
+
+1. **滞后跳变复现**：在集成测试中注入 120 ms（15 周期）滞后，40°/s 运动中发送 Cancel 目标，JTC 瞬时将目标跳回
+   反馈位置（差值约 5.12°，远超 1.44° 步长限），完全复现了 `command refused ... StepLimit` 保护停机。
+2. **平滑斜坡过渡（Slew-Rate Limiter）实现**：
+   - 在 `write()` 中，当目标相对于 `last_cmd_deg_` 超过单周期步长限时，检查目标是否对齐当前状态反馈（在异步延时容差内）；
+   - 若属于 JTC 的 hold/abort 请求，驱动不触发 `ProtectiveStop::StepLimit`，而是激活 `holding_ramp_`，以 `max_step_deg_`
+     的最大安全步长平滑斜坡过渡至目标位置；
+   - 面对真正的系统异常跳变（与当前状态无关的跳变、非法浮点等），驱动依然严格拒绝并立即以保护停机处置。
+3. **测试覆盖与有效性**：
+   - 新增单测 `HardwareInterface.CancelHoldRampsSmoothlyWithoutStepFault`：模拟 20°/s 高速运行中跳回 16° 反馈位置，
+     验证硬件保持 `active`、`fault_class` 为 0、且下发到控制器的每一步均严格 $\le 1.44^\circ$；
+   - **正向控制验证**：临时禁用 `holding_ramp_` 逻辑，该单测立即失败，抛出预期的 `command refused ... StepLimit`；
+     现有的 `StepCheckRefusesAJumpAndTheFirmwareNeverSeesIt`（30° 异常跳跃）和 `AControllerThatIgnoresThePauseEndsInTheStepCheck`
+     依然 100% 触发保护停机。
+4. **架构决定落实**：
+   - 保持 `kLead = 3` 与 `prefill = 3` 不变，维持 `ServoSender` 重采样与时钟偏差补偿队列的稳态；
+   - 常规取消纯在 ROS 侧由驱动平滑过渡，不调用 8080 STOP。
+5. **最终验证**：`./scripts/check.sh` 全部通过，**204 tests, 0 errors, 0 failures, 4 skipped**。
