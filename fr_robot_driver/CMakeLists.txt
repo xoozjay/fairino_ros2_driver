@@ -51,6 +51,12 @@ if(BUILD_TESTING)
   find_package(ament_index_cpp REQUIRED)
   find_package(lifecycle_msgs REQUIRED)
 
+  ament_add_gtest(test_arm_gate test/test_arm_gate.cpp)
+  target_link_libraries(test_arm_gate fr_robot_hardware_interface)
+  target_include_directories(test_arm_gate PRIVATE include)
+  target_compile_features(test_arm_gate PRIVATE cxx_std_17)
+  target_compile_options(test_arm_gate PRIVATE -Wall -Wextra -Wpedantic -Werror)
+
   ament_add_gtest(test_reset_policy test/test_reset_policy.cpp)
   target_link_libraries(test_reset_policy fr_robot_hardware_interface)
 

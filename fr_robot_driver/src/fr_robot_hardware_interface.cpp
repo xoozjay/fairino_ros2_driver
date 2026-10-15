@@ -219,9 +219,9 @@ CallbackReturn FrRobotHardwareInterface::on_init(
     return CallbackReturn::ERROR;
   }
   ratio_ = update_rate * cmd_t_ms_ / 1000;
-  for (const auto & name : joint_names_) {
-    const double vmax_deg_s = info.limits.at(name).max_velocity * kRadToDeg;
-    max_step_deg_.push_back(vmax_deg_s * cmd_t_ms_ / 1000.0);
+  for (std::size_t i = 0; i < joint_names_.size(); ++i) {
+    const double vmax_deg_s = info.limits.at(joint_names_[i]).max_velocity * kRadToDeg;
+    max_step_deg_[i] = vmax_deg_s * cmd_t_ms_ / 1000.0;
   }
 
   // ---- connections (see the header): created here, connected in on_configure ----
@@ -505,8 +505,7 @@ CallbackReturn FrRobotHardwareInterface::on_activate(const rclcpp_lifecycle::Sta
     stream_idle_frames_ = 0;
     gripper_motion_.resetMotion();
   }
-  last_cmd_deg_ = actual;
-  write_count_ = 0;
+  gate_ = std::make_unique<ArmGate>(ratio_, actual, max_step_deg_);
   protective_stop_ = ProtectiveStop::None;
   active_ = true;
   setHardwareState(HardwareState::Active);
@@ -779,51 +778,39 @@ return_type FrRobotHardwareInterface::write(const rclcpp::Time &, const rclcpp::
     if (hasGripper()) {gripper_sender_->discard();}
     return return_type::DEACTIVATE;  // -> INACTIVE; the operator resets and reactivates (F3)
   }
-  if (hasGripper()) {
-    // the arm goes first: a gripper motion never starts in a cycle in which the arm is asked to move
-    bool arm_moves = false;
-    for (int i = 0; i < 6; ++i) {
-      arm_moves = arm_moves ||
-        get_command<double>(joint_names_[i] + "/" + hardware_interface::HW_IF_POSITION) * kRadToDeg !=
-        last_cmd_deg_[i];
-    }
-    writeGripper(arm_moves);
+  JointArray command;
+  for (int i = 0; i < 6; ++i) {
+    command[i] = get_command<double>(joint_names_[i] + "/" + hardware_interface::HW_IF_POSITION) *
+      kRadToDeg;
   }
-  if (write_count_++ % static_cast<unsigned long>(ratio_) != 0) {
+  if (hasGripper()) {
+    writeGripper(gate_->commandedMoved(command));
+  }
+  if (!gate_->sendCycle()) {
     return return_type::OK;  // controller runs faster than cmdT: only every ratio_-th cycle is a segment
   }
 
-  JointArray target;
-  for (int i = 0; i < 6; ++i) {
-    target[i] = get_command<double>(joint_names_[i] + "/" + hardware_interface::HW_IF_POSITION) * kRadToDeg;
+  // What to do with the arm this cycle (arm_gate.hpp): the step check, and the parking while the
+  // gripper moves. The firmware only limits speed/acceleration/range itself (sdk_quirks S14) and a
+  // violation puts the robot in a fault (S11), so this is not optional.
+  const SegmentDecision d = gate_->decide(command, hasGripper() &&
+    gripper_busy_.load() != GripperBusy::Idle);
+  if (d.action == Segment::Refuse) {
+    RCLCPP_ERROR(get_logger(), "command refused: joint %s asks for %.3f deg after %.3f deg in one "
+      "%d ms step (limit %.3f deg)", joint_names_[d.violation.joint].c_str(), d.violation.to_deg,
+      d.violation.from_deg, cmd_t_ms_, d.violation.limit_deg);
+    protective_stop_ = ProtectiveStop::StepLimit;
+    fault_class_ = FaultClass::RobotFault;
+    sender_->halt();
+    return return_type::DEACTIVATE;
   }
-  // While the gripper is busy the arm stays where it is (sdk_quirks G9): a command that would move
-  // it is not sent. The trajectory controller pauses meanwhile (speed_scaling_factor 0, read()), so
-  // its command stays within a cycle or two of where the arm stands and is taken up as soon as the
-  // gripper is done. A controller that ignores the scaling runs ahead; the step check stops it.
-  if (hasGripper() && gripper_busy_.load() != GripperBusy::Idle) {
-    target = last_cmd_deg_;
-  }
-  // Step check (docs/fault_handling.md 6): the firmware only limits speed/acceleration/range itself
-  // (sdk_quirks S14) and a violation puts the robot in a fault (S11).
-  for (int i = 0; i < 6; ++i) {
-    if (!std::isfinite(target[i]) || std::abs(target[i] - last_cmd_deg_[i]) > max_step_deg_[i]) {
-      RCLCPP_ERROR(get_logger(), "command refused: joint %s asks for %.3f deg after %.3f deg in one "
-        "%d ms step (limit %.3f deg)", joint_names_[i].c_str(), target[i], last_cmd_deg_[i],
-        cmd_t_ms_, max_step_deg_[i]);
-      protective_stop_ = ProtectiveStop::StepLimit;
-      fault_class_ = FaultClass::RobotFault;
-      sender_->halt();
-      return return_type::DEACTIVATE;
-    }
-  }
-  if (!sender_->enqueue(target)) {
+  if (!sender_->enqueue(d.target)) {
     // full queue or dead sender: the stream to the controller is broken
     fault_class_ = FaultClass::Comm;
     comm_reason_ = CommReason::EnqueueFailed;
     return return_type::ERROR;
   }
-  last_cmd_deg_ = target;
+  gate_->sent(d.target);
   return return_type::OK;
 }
 

@@ -23,6 +23,7 @@
 #include "fr_client_library/state_receiver.hpp"
 #include "control_msgs/action/parallel_gripper_command.hpp"
 #include "diagnostic_msgs/msg/diagnostic_status.hpp"
+#include "fr_robot_driver/arm_gate.hpp"
 #include "fr_robot_driver/gripper_motion.hpp"
 #include "fr_robot_driver/kinematics.hpp"
 #include "fr_robot_driver/status_report.hpp"
@@ -108,7 +109,7 @@ private:
   std::string fault_class_interface_;  // "<tf_prefix>fr_status/fault_class"
   std::string speed_scaling_interface_;  // "<tf_prefix>speed_scaling/speed_scaling_factor"
   std::vector<std::string> joint_names_;
-  std::vector<double> max_step_deg_;  // per joint, per segment: URDF velocity limit * cmdT
+  std::array<double, 6> max_step_deg_{};  // per joint, per segment: URDF velocity limit * cmdT
 
   // ---- connections: created once in on_init and never replaced, only (dis)connected by the
   // lifecycle callbacks, so that the status timer and the services (other threads) may use them
@@ -135,8 +136,7 @@ private:
 
   fr_client_library::FaultClass logged_class_ = fr_client_library::FaultClass::None;
   fr_client_library::StateSnapshot frame_;  // read()'s newest frame (realtime thread only)
-  JointArray last_cmd_deg_{};
-  unsigned long write_count_ = 0;
+  std::unique_ptr<ArmGate> gate_;  // the write-side rules (arm_gate.hpp)
   std::chrono::steady_clock::duration comm_timeout_{};
 
   // ---- gripper (optional: the gripper_joint parameter names its joint) ----
