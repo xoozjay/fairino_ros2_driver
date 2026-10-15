@@ -726,7 +726,11 @@ void FrRobotHardwareInterface::publishJoints(const RobotState384 & s)
 
 return_type FrRobotHardwareInterface::read(const rclcpp::Time &, const rclcpp::Duration &)
 {
-  receiver_->tryLatest(frame_);   // the receiver is busy this instant: keep the previous frame
+  // The receiver is busy this instant: keep the previous frame. With none yet (the first read after
+  // configure) wait the moment a copy takes, rather than judge the empty default frame stale.
+  if (!receiver_->tryLatest(frame_) && frame_.frame_count == 0) {
+    receiver_->latest(frame_);
+  }
   const StateSnapshot & snap = frame_;
   const bool stale = !snap.fresh(comm_timeout_);
   const bool link_lost = !receiver_->running();
