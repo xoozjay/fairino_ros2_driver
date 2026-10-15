@@ -751,8 +751,9 @@ TEST(Gripper, GoalsGoOutWithTheirSpeedAndForceAndSucceed)
   EXPECT_EQ(sent(0.08, 1.0, 1000.0), (std::vector<double>{1, 100, 100, 100, 30000, 1, 0, 0, 0, 0}));
   EXPECT_EQ(sent(-0.01, -1.0, -1.0), (std::vector<double>{1, 0, 50, 20, 30000, 1, 0, 0, 0, 0}));
   EXPECT_EQ(r.fake.count("ActGripper"), 0);         // never activated by the driver
-  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "gripper_object") == "none";}));
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "gripper_motion_done") == "1";}));
   EXPECT_EQ(Rig::value(r.status(), "gripper_commands"), "<missing>");
+  EXPECT_EQ(Rig::value(r.status(), "gripper_object"), "<missing>");   // not observable (G13)
 }
 
 TEST(Gripper, GoalsAreRejectedUnlessTheGripperIsUsableAndOldOnesNeverRun)
@@ -1128,7 +1129,7 @@ TEST(Gripper, AFailedCallKeepsTheArmStillUntilTheFrameShowsTheGripperDone)
   EXPECT_EQ(r.stateId(), lc::State::PRIMARY_STATE_ACTIVE);
 }
 
-TEST(Gripper, AGraspSucceedsAsStalledAndADropIsReported)
+TEST(Gripper, AGraspSucceedsAsStalledAndALossOnTheWayAborts)
 {
   Rig r("", 125, kWithGripper);
   r.fake.gripper_object_at = 27;                     // an object between the fingers
@@ -1145,9 +1146,7 @@ TEST(Gripper, AGraspSucceedsAsStalledAndADropIsReported)
   EXPECT_FALSE(res->result->reached_goal);
   EXPECT_NEAR(res->result->state.position.at(0), 0.0108, 1e-9);   // 27 %
   EXPECT_EQ(r.state(kScaling), 1.0);                 // the arm is free at once
-  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "gripper_object") == "held";}));
-  r.fake.edit([](auto & s) {s.gripper_motiondone = 3;});   // pulled out: dropped
-  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "gripper_object") == "dropped";}));
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "gripper_motion_done") == "2";}));
 
   r.fake.gripper_object_at = -1;
   h = c.send(0.04);                                  // opens from there (2 -> 0 -> 1)

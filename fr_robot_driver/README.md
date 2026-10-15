@@ -99,6 +99,8 @@ ros2_control 状态接口只有 `<tf_prefix>fr_status/fault_class` 与 `<tf_pref
 - **结果**：状态帧先报未完成（0）、再报非 0 即运动结束（G13）。1 到位：SUCCEEDED（`reached_goal`）；2 夹住物体：
   SUCCEEDED 且 `stalled = true`；3 物体掉落或其他值：ABORTED。发出后 1.5 s 未见运动开始、或 30 s 未完成：ABORTED。
   结果里的 `state.position` 为结束时的开度
+- **夹住之后不可观测**：标志位只在运动时限内更新，之后物体掉落、被取走，帧都照报 2（G13）；驱动没有别的传感器，
+  不报告"是否仍夹着"
 - **等待**：机械臂在动时目标等它停下，不限时（调用方可取消）
 - **一次一个目标**：新目标被接受时旧目标立即 ABORTED；旧目标已发出的运动走完后才发新目标（控制器不能打断夹爪运动，G15）
 - **取消**：尚未发出的目标取消后永不执行；已发出的立即报 CANCELED，运动走完
@@ -160,7 +162,7 @@ ros2 action send_goal /gripper_controller/gripper_cmd control_msgs/action/Parall
 - 夹爪编号 `gripper_index`（launch 参数，默认 1）；编号 N 对应状态帧 `gripper_active` 的 bit N−1（G5）
 
 `~/status` 另有 `servo_stream`、`arm_commands`，以及 `gripper_active`、`gripper_fault`、`gripper_motion_done`、
-`gripper_object`（帧报 2：`held`；3：`dropped`；否则 `none`）、`gripper_busy`、`gripper_position`（%）、
+`gripper_busy`、`gripper_position`（%）、
 `gripper_command_failures`（失败的 `MoveGripper` 次数，失败原因记在日志里）。
 
 ## 用法
