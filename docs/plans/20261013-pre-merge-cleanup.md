@@ -182,3 +182,9 @@ XML-RPC 改 xmlrpc-c 合入后各立计划（TODO.md）。问题分析与证据�
   - 已激活时再次激活（硬件 active、无故障、机械臂静止、夹爪 50 %）：被拒（`gripper 1 is already active`），未发
     `ActGripper`，`~/status` 无变化，开度保持 50 %
 - 未做：合入
+
+### 被后续计划取代的内容与最终形态
+
+- **扣臂与超时**：本计划第 4 步中的 2 s 扣臂超时与 `ProtectiveStop::HoldTimeout` 已被 [20261014-gripper-arm-retest-fixes.md](20261014-gripper-arm-retest-fixes.md) 的速度缩放轨迹暂停取代；路径容差按实测滞后 118 ms 由 0.26 rad 更新为 0.85 rad；并发运动真机测试 D1–D7 由维护者取消（并发属于误用，驱动只作兜底）。
+- **夹爪 action 与纯逻辑**：本计划第 4 步留在现架构内的缺陷修复，已由后续计划 [20261014-gripper-arm-retest-fixes.md](20261014-gripper-arm-retest-fixes.md) 与 [20261015-kiss-driver-tests.md](20261015-kiss-driver-tests.md) 彻底解决（插件直供 action、纯逻辑 `GripperMotion` 抽离、无时钟回放测试、无效速度命令接口移除）。
+- **提交整理**：第 7 步提交整理已在分支 `agent/dev-clean` 上完成；所有后续改动均以独立提交串联其后，保持每个提交通过 `check.sh`。最终合入由维护者执行。

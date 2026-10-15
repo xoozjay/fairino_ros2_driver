@@ -26,11 +26,12 @@
 - [ ] 计划修订待维护者再批：夹爪两指自碰撞禁用、夹爪 goal 的执行时长监控（阻塞性前置条件）
       —— done when: 计划回到 `approved`
 
-- [ ] 对 `fr_description` 跑 MoveIt Setup Assistant（tip 选 `flange`），替代
-      `references/fairino_vendor/` 里的 7 份生成物
-- [ ] SRDF / kinematics / controllers 对接新命名（语义关节名）
+- [ ] 补全参数化 MoveIt 配置（`fr_moveit_config`）：手写配置支持 `model` 与 `tf_prefix`，
+      用 `collisions_updater` 生成各型号自碰撞禁用表（仅禁用两指互穿与相邻 link，保留夹爪与臂的碰撞）；
+      替代 `references/fairino_vendor/` 里的 7 份旧生成物
+- [ ] SRDF / kinematics / controllers 对接语义关节名
 - [ ] **验收：法兰走整圆**（维护者给定，FR5 正装；法兰位姿 = `flange_cur_pos` 约定：`base_link` 下 mm，
-      姿态 deg，R = Rz·Ry·Rx）。整圆、速度 30%，以关节轨迹经驱动执行；需要 IK（MoveIt）
+      姿态 deg，R = Rz·Ry·Rx）。整圆、速度 30%（Pilz CIRC 线速度 0.3 m/s，恒速），以关节轨迹经驱动执行；需要 IK（MoveIt）
 
       | 点 | 法兰位姿 x y z rx ry rz | 关节（deg） |
       |---|---|---|
@@ -40,9 +41,8 @@
 
       推导（本仓库 URDF 的 FK）：三组关节与位姿一致（各差 0.10 mm、0.000°，与真机 FK 检查的常差相同）；
       圆在 y = -400 mm 平面，圆心 (191.67, -400, 430)、半径 108.33 mm，全程姿态 (90, 0, 0)；整圆最左到
-      x = 83.3 mm（P1/P2 以左约 67 mm）。"30%" 的含义（关节限速的 30%？末端线速度？）执行前须与维护者确认；
-      现场布置会变，执行前确认整圆路径与从当前位形到 P1 的路径无障碍、有人在急停旁
-      —— done when: 真机走完整圆，各点法兰位姿误差有记录
+      x = 83.3 mm（P1/P2 以左约 67 mm）。现场布置会变，执行前确认整圆路径与从当前位形到 P1 的路径无障碍、有人在急停旁
+      —— done when: 真机走完整圆，各点法兰位姿误差有记录（通过 ROS 状态与 FK 计算，驱动运行时 20004 单客户端无法并用 fr_probe）
 - [ ] 多机规划场景（双臂互碰检查）——ros2_control 不查碰撞，工作台 demo 的互穿轨迹要靠它拒绝
 
 ### 单元组合层
@@ -57,7 +57,7 @@
       —— done when: 操作者仅经夹爪 action 验证开、合、夹住、从 3 张开；机械臂不动，计划 done
 
 - [ ] 合入前收敛 `agent/dev`：[docs/plans/20261013-pre-merge-cleanup.md](docs/plans/20261013-pre-merge-cleanup.md)
-      —— done when: 该计划 done、维护者合入
+      —— done when: 分支 `agent/dev-clean` 上第 1–7 步与后续修复已完成，被取代项已注明；待维护者合入
 - [ ] 夹爪不经运动队列控制（末端 485 `AxleSensorRegWrite` 或 Modbus 直连主机），让机械臂与夹爪真正同时动 —— done when: 真机验证可行性，再决定是否立计划
 - [ ] 合入后：FK 检查改用 KDL（读 `HardwareInfo::original_xml`，删 `kinematics.hpp` 与 xacro 拼出的参数）；现实现假定关节都绕
       z 轴转，`fairino3_mt_v6` 的倾斜轴会算错 —— done when: 单独计划 done，真机偏差与现实现一致

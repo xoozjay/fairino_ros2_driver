@@ -17,8 +17,8 @@ LIN / CIRC）。以维护者给定的法兰整圆（TODO.md "验收：法兰走�
   - `--dry-run`：只规划，打印时长、各关节最大速度，以及 P2 混合区内法兰线速度的最小值与路径偏离圆的最大距离
   - mock：执行成功；在 P1、P2、P3 与最左点处，由 `joint_states` 经 FK 得到的法兰位姿与目标差 ≤ 1 mm / 0.1°
     （P2 在混合区内，按实测偏离记录）；混合区外的匀速段线速度与设定值相差 ≤ 2%
-  - 真机（维护者在场、批准速度）：先 10%、再 30% 各走一圈，终点与 P1 偏差 ≤ 1 mm（`fr_probe` 的 `flange_cur_pos`），
-    无故障、伺服队列不空；记录各点法兰误差
+  - 真机（维护者在场、批准速度）：先 10%、再 30% 各走一圈，终点与 P1 偏差 ≤ 1 mm（由 ROS `joint_states` 经 FK 计算，
+    驱动运行时 20004 端口单客户端不可并用 `fr_probe`），无故障、伺服队列不空；记录各点法兰误差
 - README（包内）写明用法与安全约定
 - （修订）`gripper:=pgi140` 时 SRDF 禁用 `<prefix>left_finger_link`–`<prefix>right_finger_link`：两指网格在任何开度都互相穿插
   （闭合约 47 mm、全开约 12 mm，厂商模型亦然），二者是兄弟 link，默认碰撞矩阵不会禁用，不禁用则每次规划都报自碰撞
@@ -30,8 +30,9 @@ LIN / CIRC）。以维护者给定的法兰整圆（TODO.md "验收：法兰走�
 
 - 已有：`fr_description`（参数化宏，语义关节名 `shoulder_pan_joint` … `wrist_3_joint`，`flange` / `tool0`，
   支持 `tf_prefix`）；`fr_control.launch.py`（`model`、`tf_prefix`、`namespace`、`gripper`、`use_mock_hardware`）；
-  控制器 `<ns>/joint_trajectory_controller`（`FollowJointTrajectory`，目标容差 0.005 rad、路径容差 0.26 rad）、
-  `<ns>/gripper_controller`（`ParallelGripperCommand`）
+  控制器 `<ns>/joint_trajectory_controller`（`FollowJointTrajectory`，目标容差 0.005 rad、路径容差 0.85 rad，
+  见 `config/controllers.yaml` 与 `docs/sdk_quirks.md` S19）、
+  `<ns>/gripper_controller`（`ParallelGripperCommand`，真机由驱动插件相对名直接提供，mock 由上游控制器提供）
 - `references/fairino_vendor/fairino*_moveit2_config`：Setup Assistant 生成物，**旧关节名 `j1..j6`**、
   KDL、`joint_limits.yaml` 加速度一律 0.7 rad/s²、`pilz_cartesian_limits.yaml`（1.0 m/s、2.25 m/s²、1.57 rad/s）。
   只作参考，不复制
@@ -59,7 +60,7 @@ LIN / CIRC）。以维护者给定的法兰整圆（TODO.md "验收：法兰走�
    L 由三点所定的圆算出（不是新点），两段都在同一个圆上。若 Pilz 拒绝 CIRC–CIRC 混合，退回 `blend_radius = 0`
    （P2 处短暂停顿）并在 Result 记录。速度 / 加速度缩放取参数
 3. **真机步骤**：维护者确认现场与急停 → 驱动启动 → 10% 移到 P1，停，确认 → 先 `--dry-run` → 10% 整圆 → 30% 整圆 →
-   每步后 `fr_probe` 记录法兰位姿
+   每步后由 ROS `joint_states` 经 FK 计算记录法兰位姿（20004 单客户端，驱动运行时不可并用 `fr_probe`）
 
 4. **（修订）夹爪与 MoveIt 的执行监控（阻塞性前置条件，做法待批）**：MoveIt 执行每段轨迹时按"期望时长 × 1.1 + 0.5 s"
    （`trajectory_execution` 的默认值）计时，超时即取消 goal、执行报 `TIMED_OUT`。夹爪 goal 是单点、期望时长约 0，
