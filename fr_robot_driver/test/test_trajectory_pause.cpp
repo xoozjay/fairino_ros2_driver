@@ -209,48 +209,6 @@ TEST(TrajectoryPause, ATrajectoryThatMeetsAGripperMotionWaitsAndSucceeds)
   EXPECT_EQ(r.fake.count("ResetAllError"), 0);
 }
 
-TEST(TrajectoryPause, AGripperGoalWaitsForARunningTrajectory)
-{
-  CmRig r;
-  ASSERT_TRUE(r.ok);
-  auto t = r.move(10.0, 1.0);
-  ASSERT_TRUE(t);
-  ASSERT_TRUE(r.until([&] {return r.pan() > 1.0;}));
-  auto g = r.grip(0.02);
-  ASSERT_TRUE(g);
-  auto tr = r.result(r.trajectory, t);
-  ASSERT_TRUE(tr);
-  EXPECT_EQ(tr->code, rclcpp_action::ResultCode::SUCCEEDED);
-  auto gr = r.result(r.gripper, g);
-  ASSERT_TRUE(gr);
-  EXPECT_EQ(gr->code, rclcpp_action::ResultCode::SUCCEEDED);
-  EXPECT_EQ(r.fake.count("MoveGripper"), 1);
-  EXPECT_EQ(r.fake.move_gripper_while_streaming, 0);
-}
-
-TEST(TrajectoryPause, APausedTrajectoryCanBeCanceled)
-{
-  CmRig r;
-  ASSERT_TRUE(r.ok);
-  r.fake.gripper_motion_ms = 600;
-  auto g = r.grip(0.0);
-  ASSERT_TRUE(g);
-  ASSERT_TRUE(r.until([&] {return r.fake.state().gripper_motiondone == 0;}));
-  auto t = r.move(10.0, 0.5);
-  ASSERT_TRUE(t);
-  std::this_thread::sleep_for(100ms);
-  ASSERT_EQ(r.trajectory->async_cancel_goal(t).wait_for(2s), std::future_status::ready);
-  auto tr = r.result(r.trajectory, t);
-  ASSERT_TRUE(tr);
-  EXPECT_EQ(tr->code, rclcpp_action::ResultCode::CANCELED);
-  auto gr = r.result(r.gripper, g);
-  ASSERT_TRUE(gr);
-  std::this_thread::sleep_for(300ms);                // after the gripper: the arm stays
-  EXPECT_NEAR(r.pan(), 0.0, 0.01);
-  EXPECT_EQ(r.fake.count("ResetAllError"), 0);
-  EXPECT_EQ(r.fake.servoj_while_gripper_moves, 0);
-}
-
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);

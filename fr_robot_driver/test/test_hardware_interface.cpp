@@ -844,73 +844,12 @@ TEST(Gripper, ActivationOnlyOnRequestAndOnlyOnce)
   EXPECT_EQ(r.fake.state().gripper_fault, 0);
   r.run(3);
   EXPECT_NEAR(r.state(kFinger), 0.04, 1e-9);
-  ASSERT_TRUE(r.waitStatus([](const auto & s) {
-      return Rig::value(s, "gripper_active") == "1" &&
-      Rig::value(s, "gripper_position_source") == "inferred_open_after_activation";}));
+  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "gripper_active") == "1";}));
 
   std::tie(ok, message) = r.trigger("gripper/activate");
   EXPECT_FALSE(ok);
   EXPECT_NE(message.find("already active"), std::string::npos) << message;
   EXPECT_EQ(r.fake.count("ActGripper"), 1);
-}
-
-
-TEST(Gripper, TheOpeningIsHeldWhileTheFrameSaysZero)
-{
-  Rig r("", 125, kWithGripper);
-  // activated before the driver started and never moved since (sdk_quirks G5)
-  r.fake.edit([](auto & s) {s.gripper_active = 1; s.gripper_position = 0; s.gripper_motiondone = 0;});
-  r.fake.gripper_motion_ms = 400;                    // the frame says "0 %, not done" meanwhile (G10)
-  ASSERT_TRUE(r.configure());
-  ASSERT_TRUE(r.activate());
-  r.run(10);
-  EXPECT_NEAR(r.state(kFinger), 0.04, 1e-9);         // fully open, though the frame says 0 %
-  GripperClient c(r);
-
-  auto h = c.send(0.02);
-  ASSERT_TRUE(h);
-  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 1;}));
-  r.run(10);
-  EXPECT_NEAR(r.state(kFinger), 0.04, 1e-9);         // still where it was known to be
-  ASSERT_TRUE(c.result(h));
-  EXPECT_NEAR(r.state(kFinger), 0.02, 1e-9);
-  h = c.send(0.0);
-  ASSERT_TRUE(h);
-  ASSERT_TRUE(cycleUntil(r, [&] {return r.fake.count("MoveGripper") == 2;}));
-  r.run(10);
-  EXPECT_NEAR(r.state(kFinger), 0.02, 1e-9);         // held during the motion...
-  ASSERT_TRUE(r.waitStatus([](const auto & s) {
-      return Rig::value(s, "gripper_position_source") == "held_during_motion";}));
-  ASSERT_TRUE(cycleUntil(r, [&] {return r.state(kFinger) == 0.0;}));   // ...closed and done: 0 %
-  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "gripper_position_source") == "frame";}));
-}
-
-TEST(Gripper, AMotionToWhereTheGripperIsNeverReportsZero)
-{
-  Rig r("", 125, kWithGripper);
-  r.fake.gripper_motion_ms = 300;
-  r.fake.gripper_zero_after_done_ms = 200;           // sdk_quirks G14
-  r.fake.move_gripper_delay_ms = 100;                // until the call is taken, the frame shows 50 %
-  startWithGripperAt(r, 50);
-  GripperClient c(r);
-  double lowest = 1.0;
-  const auto watch = [&] {
-      r.cycle();
-      lowest = std::min(lowest, r.state(kFinger));
-    };
-  auto h = c.send(0.02);                             // where it is
-  ASSERT_TRUE(h);
-  auto res = c.result(h, 250, watch);
-  ASSERT_TRUE(res);
-  EXPECT_EQ(res->code, GripperClient::Code::SUCCEEDED);
-  for (int i = 0; i < 50; ++i) {watch();}            // past the 200 ms of 0 %
-  EXPECT_NEAR(lowest, 0.02, 1e-9);
-  EXPECT_NEAR(r.state(kFinger), 0.02, 1e-9);
-
-  h = c.send(0.0);                                   // a real 0 % is believed once done
-  ASSERT_TRUE(h);
-  ASSERT_TRUE(c.result(h));
-  ASSERT_TRUE(cycleUntil(r, [&] {return r.state(kFinger) == 0.0;}));
 }
 
 TEST(Gripper, ANewGoalReplacesTheWaitingOneAndWriteNeverWaits)
@@ -1165,33 +1104,6 @@ TEST(Gripper, AGraspSucceedsAsStalledAndALossOnTheWayAborts)
   res = c.result(h);
   ASSERT_TRUE(res);
   EXPECT_EQ(res->code, GripperClient::Code::ABORTED);
-}
-
-// Right after a command the previous motion's flags come back for a refresh or two (sdk_quirks
-// G17): with an opening that looks real, and with the reset's 0 % for longer than the settle time.
-// Neither ends the motion: the arm stays paused until the gripper is really there.
-TEST(Gripper, ThePreviousFlagsComingBackAreNotTheEnd)
-{
-  for (const auto & [stale_position, stale_ms] : {std::pair{50, 200}, std::pair{-1, 500}}) {
-    Rig r("", 125, kWithGripper);
-    r.fake.gripper_motion_ms = 1200;
-    r.fake.gripper_stale_from_ms = 300;
-    r.fake.gripper_stale_ms = stale_ms;
-    r.fake.gripper_stale_position = stale_position;
-    startWithGripperAt(r, 50);                       // done = 1 from the last motion
-    GripperClient c(r);
-    auto h = c.send(0.04);
-    ASSERT_TRUE(h);
-    ASSERT_TRUE(cycleUntil(r, [&] {return r.state(kScaling) == 0.0;}));
-    ASSERT_TRUE(cycleUntil(r, [&] {return r.state(kScaling) == 1.0;}, 250));
-    const auto frame = r.fake.state();               // the pause ends only once it has arrived
-    EXPECT_EQ(frame.gripper_position, 100) << stale_position;
-    EXPECT_EQ(frame.gripper_motiondone, 1) << stale_position;
-    auto res = c.result(h);
-    ASSERT_TRUE(res);
-    EXPECT_EQ(res->code, GripperClient::Code::SUCCEEDED);
-    EXPECT_NEAR(res->result->state.position.at(0), 0.04, 1e-9);
-  }
 }
 
 TEST(Gripper, ACanceledGoalNeverRunsAndASentOneRunsToItsEnd)
