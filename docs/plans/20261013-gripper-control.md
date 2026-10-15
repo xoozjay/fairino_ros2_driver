@@ -103,7 +103,7 @@
   （`serveXmlRpc` 按 `methodName` 分派，需加 `ActGripper` / `MoveGripper` 与状态帧夹爪字段）、
   `test_hardware_interface.cpp`；mock 描述的 xacro 检查见 `scripts/check.sh`
 
-**真机验证**（规则见 AGENTS.md 规则 5"真机操作"；控制器 `192.168.58.3`）：
+**真机验证**（规则见 AGENTS.md 规则 5"真机操作"）：
 
 - 激活只由维护者授权；激活前确认手指之间无物、张开路径无障碍。夹爪的激活状态每次上电清零（G1），
   会话开始时用 `fr_probe` 读 `gripper: active=… position=… motion_done=…`，不要假设

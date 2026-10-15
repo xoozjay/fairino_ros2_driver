@@ -69,10 +69,10 @@ COMM 判定在 `read()`；`on_error` 交给清理线程关闭连接。本计划�
   （configure/cleanup/析构）唤醒并结束它。`receiver_` 改为 `shared_ptr`（状态定时器可能仍持有旧对象）
 - 与计划的差别：定时器 100 ms（而非 1 Hz）以便状态变化时 `since` 准确；断线后只信任监视线程的帧，旧接收器的帧忽略
 - 验证：`./scripts/check.sh` 全绿（含新增 `StatusTopic.*`：断线 → 状态流恢复 → 报 1/149，断线期间 XML-RPC 调用数、
-  20003/8080 连接数、ServoJ、STOP 均不变）；真机 `192.168.58.3`（`activate_hardware:=false`，只 configure，不运动）
+  20003/8080 连接数、ServoJ、STOP 均不变）；真机（`activate_hardware:=false`，只 configure，不运动）
   `~/status` 正常：`ok`、`hardware_state=inactive`、`link=up`
 
-真机急停演练（FR5，3.8.4.2，192.168.58.3；`activate_hardware:=false`，操作者按下约 10 s 后松开；
+真机急停演练（FR5，3.8.4.2；`activate_hardware:=false`，操作者按下约 10 s 后松开；
 `~/status` 采样，日志时间为 UTC）：
 
 | 时刻 | `~/status` |
@@ -84,4 +84,3 @@ COMM 判定在 `read()`；`on_error` 交给清理线程关闭连接。本计划�
 无需任何操作者干预即从 COMM 转为 1/149（断线约 22.5 s，含控制箱重启），驱动全程不发指令。
 `estop` 全程为 0，与 sdk_quirks F4 一致。小缺点：监视线程收到帧之前 `last_frame_age_ms` 为 `none`
 （断线多久看 `since`）。
-

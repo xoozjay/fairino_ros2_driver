@@ -56,8 +56,9 @@ struct ServoSenderOptions
 {
   int cmd_t_ms = 8;  // ServoJ's cmdT: whole ms in [1, 1000]; sdk_quirks S2: start at 125 Hz
   int prefill = 3;   // standing segments before the first command and the target queue depth, in [0, 64]
-  // The request timeout is the longest a stuck call can keep the stream silent. ❓ to be chosen
-  // after measuring ServoJ on real hardware (ServoStats has the numbers).
+  // The request timeout is the longest a stuck call can keep the stream silent. Measured on
+  // hardware: 3.8 ms mean, 7.7 ms max (sdk_quirks S17); a full firmware queue holds a call for one
+  // cmdT (S16).
   HttpOptions http{1000, 100};
   // Feedback for the drift compensation. Empty: no compensation (eps stays 0). The target depth is
   // `prefill`, with a dead band of +-0.5.

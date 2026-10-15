@@ -62,7 +62,7 @@
   补偿生效后，不加该参数时趋势应为 0
 - 单测：`fr_client_library/test/test_servo_sender.cpp`（假控制器）；插件状态机：`fr_robot_driver/test/`
 
-**真机验证**（规则见 AGENTS.md 规则 5"真机操作"）：控制器 `192.168.58.3`；先 `fr_probe` 读并记下起始位形，
+**真机验证**（规则见 AGENTS.md 规则 5"真机操作"）：先 `fr_probe` 读并记下起始位形，
 与维护者确认运动范围；`fr_servo_bench --move --joint 6 --amplitude-deg 0.5 --seconds 600` 看 trend 与
 直方图；驱动保持时看 `/dynamic_joint_states` 里 `fr_status/servo_queue_len`。上次会话的基线数据见
 `docs/sdk_quirks.md` S17 与 `20261012-real-robot-bringup.md`。
