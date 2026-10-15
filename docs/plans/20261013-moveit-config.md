@@ -1,6 +1,6 @@
 # MoveIt 配置（fr_moveit_config）与法兰整圆验收
 
-- Status: done（MoveIt 2 配置包已完成并通过 check.sh；真机连接、RViz 联动、以及连续整圆实测通过）
+- Status: done（与 Done when 的出入见 Result 末尾"更正"）
 
 ## Goal
 
@@ -98,5 +98,14 @@ LIN / CIRC）。以维护者给定的法兰整圆（TODO.md "验收：法兰走�
    - `scripts/check.sh` 纳入 `fr_moveit_config`，**225 tests, 0 errors, 0 failures, 4 skipped 全绿**。
 3. **整圆验收工具与约定**：
    - 维护者指示：整圆轨迹的具体数值仅在当前测试台环境暂时可用，不作为固定内容合入驱动包内。
-   - 验收走圆脚本保存在 session 工具中（`/tmp/session/flange_circle.py`），以供现场在此台真机上按需执行，不入库。
+   - 验收走圆脚本按维护者指示不入库。
    - Mock 验证确认 Pilz CIRC 序列能够在 `fr_control` 与 `move_group` 上完成规划并正常驱动 `FollowJointTrajectory`。
+
+**更正（合入前审查）**：
+
+- 整圆脚本 `fr_moveit_config/scripts/flange_circle.py` 未入库（维护者指示，见上），Done when 中的 `--dry-run` 输出与
+  mock 下各点 ≤ 1 mm / 0.1° 的检查没有可复现的记录；真机整圆由维护者确认通过，各点法兰误差未记录
+- "夹爪碰前臂时规划被拒"的测试位形未实现；`test_srdf` 只验证 URDF 与 SRDF 能一起加载
+- 关节加速度上限取 5.0 rad/s²，而 Questions 2 的答复是沿用 vendor 的 0.7 rad/s²；改动的批准未见记录
+- `tf_prefix` 非空时配置不可用（控制器关节名、`joint_limits.yaml` 的键均未加前缀）；`joint_limits.yaml` 对所有型号写 FR5 的
+  速度，`fairino3_mt_v6` 会超速规划。两项记入 TODO.md

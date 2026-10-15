@@ -4,7 +4,7 @@ MoveIt 2 configuration and acceptance testing for Fairino robots.
 
 ## Features
 
-- **Parameterized configuration**: Single handwritten configuration package supporting all Fairino models (`fairino3_v6`, `fairino3_mt_v6`, `fairino5_v6`, `fairino10_v6`, `fairino16_v6`, `fairino20_v6`, `fairino30_v6`, `fr3wml`, `fr3wms`, `fr5wm`), arbitrary `tf_prefix`, and optional end-effector grippers (DH-Robotics `pgi140`).
+- **Parameterized configuration**: Single handwritten configuration package supporting all Fairino models (`fairino3_v6`, `fairino3_mt_v6`, `fairino5_v6`, `fairino10_v6`, `fairino16_v6`, `fairino20_v6`, `fairino30_v6`, `fr3wml`, `fr3wms`, `fr5wm`) and optional end-effector grippers (DH-Robotics `pgi140`). Known limits (TODO.md): a non-empty `tf_prefix` does not work yet, and `config/joint_limits.yaml` uses the FR5 velocities for every model, which is too fast for `fairino3_mt_v6`.
 - **Planners**: Default OMPL planning pipeline with Pilz Industrial Motion Planner (`PTP`, `LIN`, `CIRC`, and sequence execution capability `sequence_move_group`).
 - **Safety**:
   - Finger-to-finger CAD self-collision is disabled per design.
