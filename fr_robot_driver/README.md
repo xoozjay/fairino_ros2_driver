@@ -161,7 +161,7 @@ ros2 action send_goal /gripper_controller/gripper_cmd control_msgs/action/Parall
   驱动报全开（外轮廓最大，碰撞检查偏保守；`unknown_not_active`），激活（必然张开到满行程）后即为真。
   **上层不要把“报全开”当作实测开度**：`gripper_position_source = frame` 只表示开度来自状态帧，也不能证明物体仍被夹住
 - 夹爪速度状态恒报 0；帧更新稀疏，不估计速度。完成判定与开度推断由纯逻辑 `GripperMotion` 处理，
-  `test_gripper_motion` 回放真机帧序列；假控制器不模拟这些固件怪癖
+  `test_gripper_motion` 只测它对上层的约定（结果映射、截止时限、完成条件）；测试不复现固件怪癖
 - 夹爪编号 `gripper_index`（launch 参数，默认 1）；编号 N 对应状态帧 `gripper_active` 的 bit N−1（G5）
 
 `~/status` 另有 `servo_stream`、`arm_commands`，以及 `gripper_active`、`gripper_fault`、`gripper_motion_done`、

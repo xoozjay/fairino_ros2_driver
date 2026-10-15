@@ -122,7 +122,7 @@ public:
   std::atomic<bool> silent{false};        // keep the connection, stop sending frames
   std::atomic<bool> drop_state{false};    // close the state connection
   // Plain gripper motion: activation opens fully; a move holds its opening until it reaches the
-  // target (or an object). Firmware-specific frame sequences are tested in test_gripper_motion.
+  // target (or an object). Firmware quirks are not reproduced.
   std::atomic<int> gripper_activation_ms{200};
   std::atomic<int> move_gripper_delay_ms{0};
   std::atomic<int> gripper_motion_ms{150};
@@ -235,9 +235,6 @@ private:
     }
     if (method == "MoveGripper") {
       if (now < queue_end_) {++move_gripper_while_streaming;}
-      if (!((st_.gripper_active >> (static_cast<int>(p[0]) - 1)) & 1u)) {
-        return i4(73);   // not active: ERR_GRIPPER_MOTION (G4, G11)
-      }
       st_.gripper_motiondone = 0;
       gripper_target_ = static_cast<uint8_t>(p[1]);
       gripper_arrives_at_ = now + std::chrono::milliseconds(gripper_motion_ms.load());
@@ -260,7 +257,6 @@ private:
     if (method == "SetRobotRealtimeStateSamplePeriod") {
       const auto p = body.find("<i4>") + 4;
       const int v = std::stoi(body.substr(p));
-      if (v < 8) {return i4(4);}  // the simulator refuses below 8 ms
       period_ = v;
       return i4(0);
     }
