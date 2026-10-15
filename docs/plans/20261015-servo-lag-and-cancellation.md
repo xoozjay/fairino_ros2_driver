@@ -1,6 +1,6 @@
 # 伺服跟随滞后影响分析、JTC 轨迹取消跳变保护与延迟优化
 
-- Status: done（平滑刹车过渡已实现并通过测试；正向控制测试确认异常跳变仍被有效拦截；check.sh 204 tests 全绿）
+- Status: abandoned（实现 `d0e0b26` 已回退：斜坡走回反馈位置是全速反向、加速度不受限；见 Result 末尾"更正"）
 
 ## Goal
 
@@ -157,3 +157,11 @@ $v \times \tau$，单靠开启 `decelerate_on_cancel` 无法避开第一步的�
    - 保持 `kLead = 3` 与 `prefill = 3` 不变，维持 `ServoSender` 重采样与时钟偏差补偿队列的稳态；
    - 常规取消纯在 ROS 侧由驱动平滑过渡，不调用 8080 STOP。
 5. **最终验证**：`./scripts/check.sh` 全部通过，**204 tests, 0 errors, 0 failures, 4 skipped**。
+
+**更正（合入前审查）**：
+
+- 实现以 `max_step_deg_`（URDF 限速 × cmdT）走回反馈位置。反馈在已发命令后方，所以这是从 +v 一步变成接近 −vmax 的反向，
+  没有加速度限制，与 Approach 的"带加速度限制"不符，也违背 S15、S17。单测只断言每步 ≤ 1.45°，把这个反向当成了通过。未上真机
+- 上文第 1 条的"注入 120 ms 滞后的集成测试"不存在；Done when 中 30/60/90°/s 取消、路径容差中止、action 返回 CANCELED 均未覆盖
+- Context 第 3 节的滞后构成表中，除 `kLead`、`prefill`、XML-RPC 往返与状态周期外均为估算；S19 记为未单独测量
+- `d0e0b26` 已回退，恢复保护停止；S20 改为记录现象与现行处理，问题与候选做法记入 TODO.md 已知风险

@@ -505,7 +505,6 @@ CallbackReturn FrRobotHardwareInterface::on_activate(const rclcpp_lifecycle::Sta
     stream_idle_frames_ = 0;
     gripper_motion_.resetMotion();
   }
-  holding_ramp_ = false;
   last_cmd_deg_ = actual;
   write_count_ = 0;
   protective_stop_ = ProtectiveStop::None;
@@ -807,67 +806,16 @@ return_type FrRobotHardwareInterface::write(const rclcpp::Time &, const rclcpp::
   }
   // Step check (docs/fault_handling.md 6): the firmware only limits speed/acceleration/range itself
   // (sdk_quirks S14) and a violation puts the robot in a fault (S11).
-  // When JTC cancels or aborts a trajectory in motion, it commands state_current_ (feedback), which lags
-  // the command stream by ~118 ms (S19). At the instant of cancel, target[i] matches the state frame's
-  // feedback position (within conversion tolerance), but is several degrees away from last_cmd_deg_.
-  // If this happens, smoothly ramp down to the hold position at max_step_deg_ rather than tripping
-  // an unexpected protective stop.
-  bool step_exceeded = false;
   for (int i = 0; i < 6; ++i) {
     if (!std::isfinite(target[i]) || std::abs(target[i] - last_cmd_deg_[i]) > max_step_deg_[i]) {
-      step_exceeded = true;
-      break;
-    }
-  }
-
-  if (step_exceeded) {
-    if (!holding_ramp_) {
-      // Check if this jump is a JTC hold request targeting the actual feedback position
-      bool is_hold_request = true;
-      for (int i = 0; i < 6; ++i) {
-        // When JTC cancels/aborts, target is state_current_. Due to async execution between
-        // controller update and cancel callback, target is within a few cycles of jt_cur_pos.
-        const double hold_tol = 3.0 * max_step_deg_[i];
-        if (!std::isfinite(target[i]) || std::abs(target[i] - frame_.state.jt_cur_pos[i]) > hold_tol) {
-          is_hold_request = false;
-          break;
-        }
-      }
-      if (is_hold_request) {
-        holding_ramp_ = true;
-        hold_target_ = target;
-      }
-    }
-
-    if (holding_ramp_) {
-      bool all_reached = true;
-      for (int i = 0; i < 6; ++i) {
-        const double diff = hold_target_[i] - last_cmd_deg_[i];
-        if (std::abs(diff) > max_step_deg_[i]) {
-          target[i] = last_cmd_deg_[i] + std::clamp(diff, -max_step_deg_[i], max_step_deg_[i]);
-          all_reached = false;
-        } else {
-          target[i] = hold_target_[i];
-        }
-      }
-      if (all_reached) {
-        holding_ramp_ = false;
-      }
-    } else {
-      for (int i = 0; i < 6; ++i) {
-        if (!std::isfinite(target[i]) || std::abs(target[i] - last_cmd_deg_[i]) > max_step_deg_[i]) {
-          RCLCPP_ERROR(get_logger(), "command refused: joint %s asks for %.3f deg after %.3f deg in one "
-            "%d ms step (limit %.3f deg)", joint_names_[i].c_str(), target[i], last_cmd_deg_[i],
-            cmd_t_ms_, max_step_deg_[i]);
-        }
-      }
+      RCLCPP_ERROR(get_logger(), "command refused: joint %s asks for %.3f deg after %.3f deg in one "
+        "%d ms step (limit %.3f deg)", joint_names_[i].c_str(), target[i], last_cmd_deg_[i],
+        cmd_t_ms_, max_step_deg_[i]);
       protective_stop_ = ProtectiveStop::StepLimit;
       fault_class_ = FaultClass::RobotFault;
       sender_->halt();
       return return_type::DEACTIVATE;
     }
-  } else {
-    holding_ramp_ = false;
   }
   if (!sender_->enqueue(target)) {
     // full queue or dead sender: the stream to the controller is broken

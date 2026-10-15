@@ -135,8 +135,6 @@ private:
 
   fr_client_library::FaultClass logged_class_ = fr_client_library::FaultClass::None;
   fr_client_library::StateSnapshot frame_;  // read()'s newest frame (realtime thread only)
-  bool holding_ramp_ = false;              // smoothly ramping down to a JTC hold position
-  JointArray hold_target_{};
   JointArray last_cmd_deg_{};
   unsigned long write_count_ = 0;
   std::chrono::steady_clock::duration comm_timeout_{};
