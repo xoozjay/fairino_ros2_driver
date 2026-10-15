@@ -503,6 +503,7 @@ CallbackReturn FrRobotHardwareInterface::on_activate(const rclcpp_lifecycle::Sta
     ++gripper_epoch_;   // goals from before never run
     gripper_busy_ = GripperBusy::Idle;
     stream_idle_frames_ = 0;
+    gripper_awaiting_nonzero_ = false;
   }
   last_cmd_deg_ = actual;
   write_count_ = 0;
@@ -832,15 +833,18 @@ bool FrRobotHardwareInterface::gripperActive(const RobotState384 & s) const
 double FrRobotHardwareInterface::gripperOpening(const RobotState384 & s, GripperSource & source) const
 {
   // The frame says 0 % and "not done" while a motion starts (the gripper link is slow, G10) and
-  // after an activation until the first motion (G5): keep the last known opening then; with none,
-  // or after an activation (which always opens fully, G2), report fully open.
+  // after an activation until the first motion (G5); after a motion to where the gripper already
+  // was, it still says 0 % for about 200 ms once done (G14). So a 0 % is believed only once the
+  // motion is done and, for a target other than 0 %, the frame has shown another opening since.
+  // Until then keep the last known opening; with none, or after an activation (which always opens
+  // fully, G2), report fully open.
   if (!gripperActive(s)) {
     // Not active: the frame says 0 % whatever the fingers do (G1, G11). Report the widest outline
     // for collision checking; the activation that has to come first opens it fully anyway.
     source = GripperSource::UnknownNotActive;
     return kGripperStroke;
   }
-  if (s.gripper_motiondone == 0 && s.gripper_position == 0) {
+  if (s.gripper_position == 0 && (s.gripper_motiondone == 0 || gripper_awaiting_nonzero_)) {
     if (gripper_known_ >= 0.0 && !gripper_known_from_activation_) {
       source = GripperSource::HeldDuringMotion;
       return gripper_known_;
@@ -856,8 +860,9 @@ void FrRobotHardwareInterface::readGripper(const StateSnapshot & snap, FaultClas
 {
   const RobotState384 & s = snap.state;
   const bool active = gripperActive(s);
-  if (active && !gripper_was_active_ && gripper_known_ >= 0.0) {
-    gripper_known_from_activation_ = true;   // activated meanwhile: it opened fully
+  if (active && !gripper_was_active_) {
+    gripper_known_from_activation_ = gripper_known_ >= 0.0;   // activated meanwhile: it opened fully
+    gripper_awaiting_nonzero_ = false;
   }
   gripper_was_active_ = active;
 
@@ -884,6 +889,13 @@ void FrRobotHardwareInterface::readGripper(const StateSnapshot & snap, FaultClas
       auto moving = GripperBusy::Moving;
       gripper_busy_.compare_exchange_strong(moving, GripperBusy::Idle);
     }
+  }
+  // an opening other than 0 % counts once the motion has started: until then the frame still shows
+  // where the gripper was before
+  if (s.gripper_position != 0 &&
+    (gripper_busy_.load() != GripperBusy::Moving || gripper_seen_running_))
+  {
+    gripper_awaiting_nonzero_ = false;
   }
 
   GripperSource source = GripperSource::Frame;
@@ -937,6 +949,7 @@ void FrRobotHardwareInterface::writeGripper(bool arm_moves)
   }
   if (gripper_sender_->post(goal.command)) {   // never blocks; busy this instant: again next cycle
     goal.sent = true;
+    gripper_awaiting_nonzero_ = goal.command.position != 0;
     gripper_sent_id_ = goal.id;
     gripper_posted_at_ = std::chrono::steady_clock::now();
     gripper_seen_running_ = false;

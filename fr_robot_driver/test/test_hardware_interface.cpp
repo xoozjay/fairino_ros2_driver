@@ -884,6 +884,34 @@ TEST(Gripper, TheOpeningIsHeldWhileTheFrameSaysZero)
   ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "gripper_position_source") == "frame";}));
 }
 
+TEST(Gripper, AMotionToWhereTheGripperIsNeverReportsZero)
+{
+  Rig r("", 125, kWithGripper);
+  r.fake.gripper_motion_ms = 300;
+  r.fake.gripper_zero_after_done_ms = 200;           // sdk_quirks G14
+  r.fake.move_gripper_delay_ms = 100;                // until the call is taken, the frame shows 50 %
+  startWithGripperAt(r, 50);
+  GripperClient c(r);
+  double lowest = 1.0;
+  const auto watch = [&] {
+      r.cycle();
+      lowest = std::min(lowest, r.state(kFinger));
+    };
+  auto h = c.send(0.02);                             // where it is
+  ASSERT_TRUE(h);
+  auto res = c.result(h, 250, watch);
+  ASSERT_TRUE(res);
+  EXPECT_EQ(res->code, GripperClient::Code::SUCCEEDED);
+  for (int i = 0; i < 50; ++i) {watch();}            // past the 200 ms of 0 %
+  EXPECT_NEAR(lowest, 0.02, 1e-9);
+  EXPECT_NEAR(r.state(kFinger), 0.02, 1e-9);
+
+  h = c.send(0.0);                                   // a real 0 % is believed once done
+  ASSERT_TRUE(h);
+  ASSERT_TRUE(c.result(h));
+  ASSERT_TRUE(cycleUntil(r, [&] {return r.state(kFinger) == 0.0;}));
+}
+
 TEST(Gripper, ANewGoalReplacesTheWaitingOneAndWriteNeverWaits)
 {
   Rig r("", 125, kWithGripper);

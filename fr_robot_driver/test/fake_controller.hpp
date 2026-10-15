@@ -131,6 +131,9 @@ public:
   // An object between the fingers at this opening [%] (-1: none): closing past it stops there and
   // the frame says "done = 2" (grasped, sdk_quirks G13). A test sets done = 3 (dropped) by edit().
   std::atomic<int> gripper_object_at{-1};
+  // After "done" the frame keeps saying 0 % for this long before the opening shows (sdk_quirks G14:
+  // about 200 ms after a motion to where the gripper already was).
+  std::atomic<int> gripper_zero_after_done_ms{0};
   // The servo queue: every ServoJ is one 8 ms segment, played in turn; the frame's mc_queue_len is
   // what is left (plus whatever a test sets). What a real controller would hold back: MoveGripper
   // while segments are left (G8), and ServoJ while the gripper moves (G9). Tests expect both 0.
@@ -241,6 +244,7 @@ private:
         return i4(73);   // not active: ERR_GRIPPER_MOTION (G4, G11)
       }
       st_.gripper_position = 0;    // G10
+      gripper_shows_at_.reset();
       st_.gripper_motiondone = 0;
       gripper_target_ = static_cast<uint8_t>(p[1]);
       gripper_arrives_at_ = now + std::chrono::milliseconds(gripper_motion_ms.load());
@@ -305,9 +309,15 @@ private:
           if (gripper_arrives_at_ && std::chrono::steady_clock::now() >= *gripper_arrives_at_) {
             const int object = gripper_object_at.load();
             const bool grasped = object >= 0 && gripper_target_ < object;
-            st_.gripper_position = grasped ? static_cast<uint8_t>(object) : gripper_target_;
+            gripper_target_ = grasped ? static_cast<uint8_t>(object) : gripper_target_;
             st_.gripper_motiondone = grasped ? 2 : 1;
             gripper_arrives_at_.reset();
+            gripper_shows_at_ = std::chrono::steady_clock::now() +
+              std::chrono::milliseconds(gripper_zero_after_done_ms.load());
+          }
+          if (gripper_shows_at_ && std::chrono::steady_clock::now() >= *gripper_shows_at_) {
+            st_.gripper_position = gripper_target_;
+            gripper_shows_at_.reset();
           }
           s = st_;
           const auto left = queue_end_ - std::chrono::steady_clock::now();
@@ -380,6 +390,7 @@ private:
   std::optional<std::chrono::steady_clock::time_point> gripper_activates_at_;
   int gripper_bit_ = 0;
   std::optional<std::chrono::steady_clock::time_point> gripper_arrives_at_;
+  std::optional<std::chrono::steady_clock::time_point> gripper_shows_at_;
   uint8_t gripper_target_ = 0;
   std::chrono::steady_clock::time_point queue_end_{};   // when the last queued segment is played
   std::atomic<int> stops_{0};

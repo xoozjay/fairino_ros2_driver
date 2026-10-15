@@ -156,6 +156,7 @@ private:
   int stream_idle_frames_ = 0;             // consecutive reads: stream paused, firmware queue empty
   double gripper_known_ = -1.0;            // last opening [m] the frame reported; -1: none yet
   bool gripper_known_from_activation_ = false;
+  bool gripper_awaiting_nonzero_ = false;  // a motion to a target > 0 % went out, the frame still says 0 %
   bool gripper_was_active_ = false;
   double gripper_reported_ = -1.0;         // the opening last reported, for the velocity
   double gripper_velocity_ = 0.0;

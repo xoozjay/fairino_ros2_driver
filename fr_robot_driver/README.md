@@ -150,7 +150,8 @@ ros2 action send_goal /gripper_controller/gripper_cmd control_msgs/action/Parall
   都限制在 1–100；goal 未给时用 50 % 速度（0.022 m/s）、20 % 力（28 N，夹玻璃器皿），与 mock 的
   `gripper_controller` 参数 `max_velocity`、`max_effort` 一致
 - 开度 = 状态帧的 `gripper_position` %（整数）× 0.04 m。控制器与夹爪之间通信慢：每次运动开始约 0.8 s 内帧报 0 %、
-  未完成，之后约每 0.4 s 才更新一次（G10）。帧报"0 %、未完成"时沿用上一个已知开度
+  未完成，之后约每 0.4 s 才更新一次（G10）；运动到当前开度时，完成后帧还会报 0 % 约 200 ms（G14）。帧报"0 %、未完成"时，
+  以及目标不为 0 % 而发出后帧还没报过非 0 开度时，沿用上一个已知开度
   （`~/status` 的 `gripper_position_source = held_during_motion`）；激活后（必然全开）或驱动启动时还不知道开度，
   则报全开（`inferred_open_after_activation`）；其余为 `frame`。**未激活时**帧报 0 %，与手指实际位置无关，开度不可知：
   驱动报全开（外轮廓最大，碰撞检查偏保守；`unknown_not_active`），激活（必然张开到满行程）后即为真。
