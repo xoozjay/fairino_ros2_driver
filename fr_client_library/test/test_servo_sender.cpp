@@ -217,7 +217,7 @@ TEST(ServoSender, SlowCallsAreCaughtUpNotSkipped)
 TEST(ServoSender, FullHostQueueRefusesAndCounts)
 {
   Controller c;
-  c.delayServoJ(30);
+  c.delayServoJ(2);                          // slower than the burst below, which takes microseconds
   ServoSender s("127.0.0.1", c.port(), opts(5));
   ASSERT_TRUE(s.start(joint1(0)).ok());
   int accepted = 0;
@@ -443,18 +443,17 @@ INSTANTIATE_TEST_SUITE_P(Drift, DriftCompensation, ::testing::Values(1000.0, -10
 TEST(ServoSender, TrimmedSendsStayOnThePolylineOfTheCommands)
 {
   Controller c;
-  c.playSegments(2, 5000);                   // consumes slowly: the trim goes to its limit
   ServoSenderOptions o = opts(2, 3);
-  o.queue_depth = [&c]() -> std::optional<int> {return c.depth();};
-  o.loop_bandwidth_rad_s = 4.0;
+  o.queue_depth = []() -> std::optional<int> {return 200;};   // far too deep: the trim goes to +1 %
+  o.loop_bandwidth_rad_s = 4.0;                               // and gets there right after the settling
   ServoSender s("127.0.0.1", c.port(), o);
   ASSERT_TRUE(s.start(joint1(0)).ok());
   const auto t0 = std::chrono::steady_clock::now();
-  for (int i = 0; i < 1500; ++i) {           // long enough for the fraction to wrap many times
+  for (int i = 0; i < 500; ++i) {            // at 1 % the fraction wraps every 100 sends
     std::this_thread::sleep_until(t0 + 2ms * i);
     ASSERT_TRUE(s.enqueue(joint1(i % 2)));
   }
-  EXPECT_GT(s.stats().trim_ppm, 500.0);   // trimmed, whatever the host load
+  EXPECT_DOUBLE_EQ(s.stats().trim_ppm, DepthLoop::kMaxTrimPpm);
   s.stop();
   for (const double v : c.servoJFirstJoints()) {
     EXPECT_GE(v, -1e-6);

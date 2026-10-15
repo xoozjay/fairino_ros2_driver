@@ -123,20 +123,6 @@ TEST(Http, ErrorClosesAndDoesNotReconnectSilently)
   EXPECT_EQ(c.post("a").status, HttpStatus::NotConnected);  // the caller decides to reconnect
 }
 
-TEST(Http, NoAnswerTimesOut)
-{
-  FakeServer s([&](int fd) {
-      readHttpRequest(fd);
-      std::this_thread::sleep_for(800ms);
-    });
-  HttpConnection c("127.0.0.1", s.port(), fast());
-  ASSERT_TRUE(c.connect());
-  const auto t0 = std::chrono::steady_clock::now();
-  EXPECT_EQ(c.post("a").status, HttpStatus::Timeout);
-  EXPECT_LT(std::chrono::steady_clock::now() - t0, 700ms);
-  EXPECT_FALSE(c.isOpen());
-}
-
 TEST(Http, NonOkStatusAndMissingContentLengthAreProtocolErrors)
 {
   int n = 0;

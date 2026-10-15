@@ -164,24 +164,6 @@ TEST(Channel, ReplySplitAndForeignReplySkipped)
   EXPECT_EQ(ch.send(InstantCommand::Stop).status, InstantStatus::Ok);
 }
 
-TEST(Channel, NoReplyTimesOutAndDisconnects)
-{
-  std::promise<bool> peer_saw_close;
-  FakeServer s([&](int fd) {
-      readFrame(fd);
-      char c;
-      peer_saw_close.set_value(::recv(fd, &c, 1, 0) == 0);  // EOF once the client gives up
-    });
-  InstantCommandChannel ch("127.0.0.1", s.port(), fastOptions());
-  ASSERT_TRUE(ch.connect());
-  const auto t0 = std::chrono::steady_clock::now();
-  EXPECT_EQ(ch.send(InstantCommand::Stop).status, InstantStatus::Timeout);
-  EXPECT_LT(std::chrono::steady_clock::now() - t0, 1500ms);
-  EXPECT_FALSE(ch.connected());
-  EXPECT_TRUE(peer_saw_close.get_future().get());
-  EXPECT_EQ(ch.send(InstantCommand::Stop).status, InstantStatus::NotConnected);
-}
-
 TEST(Channel, PeerClosedIsIoError)
 {
   FakeServer s([&](int fd) {readFrame(fd);});

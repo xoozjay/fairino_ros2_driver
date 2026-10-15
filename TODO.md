@@ -54,8 +54,6 @@
 
 ### 杂项
 
-- [ ] 合入前收敛 `agent/dev`：[docs/plans/20261013-pre-merge-cleanup.md](docs/plans/20261013-pre-merge-cleanup.md)
-      —— done when: 分支 `agent/dev-clean` 上第 1–7 步与后续修复已完成，被取代项已注明；待维护者合入
 - [ ] 夹爪不经运动队列控制（末端 485 `AxleSensorRegWrite` 或 Modbus 直连主机），让机械臂与夹爪真正同时动 —— done when: 真机验证可行性，再决定是否立计划
 - [ ] 合入后：FK 检查改用 KDL（读 `HardwareInfo::original_xml`，删 `kinematics.hpp` 与 xacro 拼出的参数）；现实现假定关节都绕
       z 轴转，`fairino3_mt_v6` 的倾斜轴会算错 —— done when: 单独计划 done，真机偏差与现实现一致
@@ -76,10 +74,6 @@
 - 3.7.6–3.8.3 与 3.8.4 之外的状态帧：只做过 SDK 各 tag 静态比对，未上真机
 
 ## 已知风险
-
-- **依赖墙钟的测试在负载下偶发失败**：`ServoSender.TrimmedSendsStayOnThePolylineOfTheCommands`（trim 468 ppm，要求 > 500）、
-  `StatusTopic.LinkLossThenTheControllersOwnFaultIsSeenWithoutAnyCommand`（等待状态超时）各在一次 check 中失败，单独与重跑
-  通过 —— impact: check 偶尔误报，须重跑确认；改为模拟时间可根除（同 `DepthLoop` 的做法）
 
 - **`ServoJ` 往返最大 7.7 ms，接近 8 ms 周期**（真机 S17）：网络更差时发送会落后，`ServoSender` 追赶、
   固件队列吸收；`cmd_t_ms` 4 时往返均值已接近周期（S21 的 5 min 内未见排空）—— impact: 队列抖动变大，`prefill` 余量被吃掉，

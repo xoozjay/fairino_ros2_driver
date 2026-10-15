@@ -1,6 +1,6 @@
 # 合入前收敛 agent/dev：修并发与夹爪缺陷、删死代码、整理提交
 
-- Status: approved
+- Status: done（分支 `agent/dev-clean` 待维护者合入）
 
 ## Goal
 
@@ -129,7 +129,7 @@ XML-RPC 改 xmlrpc-c 合入后各立计划（TODO.md）。问题分析与证据�
 
 ## Result
 
-（进行中；第 1–7 步完成，真机项待操作者，合入待维护者）
+第 1–7 步与真机项完成；合入由维护者执行。
 
 第 1–6 步各一个提交（44f22f3、8ebb5c4、7f3c258、9529211、e4a3618、7f99812），每个都通过 `scripts/check.sh`；
 `rm -rf build install log` 后从零跑 check：179 tests, 0 failures, 4 skipped（基线 180 tests；删去 `test_triple_buffer` 与
@@ -183,7 +183,10 @@ XML-RPC 改 xmlrpc-c 合入后各立计划（TODO.md）。问题分析与证据�
     `ActGripper`，`~/status` 无变化，开度保持 50 %
 - **缺 `Assisted-by` 的提交**：N1、N3、N4、N8、N11（`b68e555`、`d6dda11`、`5e83e54`、`d79fb71`、`59092ea`）由 agent 编写，
   其来源提交在 `agent/dev` 上就没有尾注，工具与模型已不可考；未重写历史补记（会使计划中引用的提交哈希失效）
-- 未做：合入
+- **第 7 步之后**：`agent/dev-clean` 上又加了后续计划与合入前审查的提交，`git diff agent/dev agent/dev-clean`
+  不再为空，"最终树与 `agent/dev` 相同"只对第 7 步成立。其中改了代码的 22 个逐个从当时的源码构建并跑 `scripts/check.sh`
+  （同一个 build 目录增量构建）：21 个通过；`dcaa328` 一次失败、单独重跑通过——激活后第一次 `read()` 误判状态帧过期，
+  机器负载高时出现，`8798298` 修复。故 `dcaa328`..`8798298` 之间的提交在负载下可能偶发失败，bisect 时须重跑确认
 
 ### 被后续计划取代的内容与最终形态
 

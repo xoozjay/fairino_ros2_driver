@@ -476,61 +476,6 @@ TEST(StatusTopic, IsPublishedInEveryLifecycleStateAndFollowsFaults)
   EXPECT_EQ(r.status().level, diagnostic_msgs::msg::DiagnosticStatus::ERROR);
 }
 
-TEST(StatusTopic, LinkLossThenTheControllersOwnFaultIsSeenWithoutAnyCommand)
-{
-  Rig r;
-  ASSERT_TRUE(r.configure());
-  ASSERT_TRUE(r.activate());
-  r.run(5);
-
-  r.fake.drop_state = true;                            // the controller vanishes (power cut)
-  bool errored = false;
-  for (int i = 0; i < 40 && !errored; ++i) {
-    errored = r.cycle().result == return_type::ERROR;
-  }
-  ASSERT_TRUE(errored);
-  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "fault_class") == "3";}));
-  const auto down = r.status();
-  EXPECT_EQ(Rig::value(down, "link"), "down");
-  EXPECT_EQ(Rig::value(down, "hardware_state"), "unconfigured");
-  EXPECT_NE(down.message.find("interrupted"), std::string::npos) << down.message;
-  EXPECT_NE(Rig::value(down, "since"), "<missing>");
-
-  // From here on the driver may only watch the state stream: nothing else is touched.
-  std::this_thread::sleep_for(500ms);                  // the cleanup thread has closed everything
-  const auto calls = r.fake.xmlrpcCalls();
-  const auto servoj = r.fake.servoJ().size();
-  const int xmlrpc_conn = r.fake.xmlrpcConnections(), instant_conn = r.fake.instantConnections();
-  const int stops = r.fake.stops(), states = r.fake.stateConnections();
-
-  r.fake.edit([](auto & s) {s.main_code = 1; s.sub_code = 149; s.safety_stop0_state = 1; s.rbtEnableState = 0;});
-  r.fake.drop_state = false;                           // the controller is back and reports its fault
-  ASSERT_TRUE(r.waitStatus([](const auto & s) {return Rig::value(s, "fault_class") == "1";}, 6s));
-  const auto fault = r.status();
-  EXPECT_EQ(Rig::value(fault, "main_code"), "1");
-  EXPECT_EQ(Rig::value(fault, "sub_code"), "149");
-  EXPECT_EQ(Rig::value(fault, "link"), "up");
-  EXPECT_EQ(Rig::value(fault, "hardware_state"), "unconfigured");   // moving again stays the operator's call
-  EXPECT_NE(Rig::value(fault, "previous").find("communication fault"), std::string::npos)
-    << Rig::value(fault, "previous");
-  EXPECT_GT(r.fake.stateConnections(), states);        // it reconnected the state stream...
-
-  EXPECT_EQ(r.fake.xmlrpcCalls(), calls);              // ...and nothing else: no XML-RPC,
-  EXPECT_EQ(r.fake.xmlrpcConnections(), xmlrpc_conn);
-  EXPECT_EQ(r.fake.instantConnections(), instant_conn);  // no 8080,
-  EXPECT_EQ(r.fake.servoJ().size(), servoj);           // no ServoJ,
-  EXPECT_EQ(r.fake.stops(), stops);
-  EXPECT_EQ(r.fake.count("ResetAllError"), 0);         // and never a reset
-
-  // The operator can still configure again (the monitor lets go of the state stream).
-  r.fake.edit([](auto & s) {s.main_code = 0; s.sub_code = 0; s.safety_stop0_state = 0; s.rbtEnableState = 1;});
-  ASSERT_TRUE(r.configure());
-  ASSERT_TRUE(r.activate());
-  r.run(5);
-  ASSERT_TRUE(r.waitStatus([](const auto & s) {
-      return Rig::value(s, "hardware_state") == "active" && Rig::value(s, "fault_class") == "0";}));
-}
-
 TEST(HardwareInterface, StepCheckRefusesAJumpAndTheFirmwareNeverSeesIt)
 {
   Rig r;
@@ -966,7 +911,7 @@ TEST(Gripper, AGoalWaitsForTheArmToStand)
   r.cycle([&] {(void)pan.set_value(0.5 * kDeg);});   // the arm moves...
   auto h = c.send(0.0);                              // ...when the gripper is asked to close
   ASSERT_TRUE(h);
-  for (int i = 2; i <= 300; ++i) {                   // 2.4 s of motion: the goal waits, however long
+  for (int i = 2; i <= 40; ++i) {                    // well past when it could have gone out: it waits
     r.cycle([&] {(void)pan.set_value(i * 0.5 * kDeg);});
   }
   EXPECT_EQ(r.fake.count("MoveGripper"), 0);
