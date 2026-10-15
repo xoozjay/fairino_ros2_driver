@@ -1,7 +1,6 @@
 # 让夹爪不再干扰机械臂：轨迹暂停代替扣臂停机，修正夹爪完成判定与过期命令
 
-- Status: approved（经审查修订后再批：夹爪结束即放行、挂起目标的作废与拒绝、激活期间暂停、被取代的目标 ABORTED、
-  JTC 因子 0 的行为由源码确认）
+- Status: done（D 组由维护者取消：夹爪命令不与机械臂命令同时发，不这样测；驱动的暂停只作兜底）
 
 ## Goal
 
@@ -14,7 +13,7 @@ J6 ±30°）发现：夹住物体后机械臂与夹爪被锁 30 s；被中止的
 
 ## Done when
 
-- 下文"测试"一节：A、B 组进入 `scripts/check.sh` 并通过；C 组手动通过；D 组真机通过
+- 下文"测试"一节：A、B 组进入 `scripts/check.sh` 并通过；C 组手动通过（D 组已取消，见 Status）
 - 驱动代码中不再有因夹爪而起的保护停止（`ProtectiveStop::HoldTimeout` 删除）
 - sdk_quirks 增加本次实测（下文 E1–E5），README 夹爪段与故障表同步
 
@@ -164,7 +163,7 @@ MoveIt 的执行时长监控会把暂停的时间算作超时：MoveIt 计划须
 `speed_scaling/speed_scaling_factor` 存在且为 1.0；`ros2 action list -t` 列出 `/gripper_controller/gripper_cmd`
 `[control_msgs/action/ParallelGripperCommand]`，开合各一次 SUCCEEDED。
 
-**D. 真机**（操作者发起夹爪指令；J6 范围与速度按维护者许可）
+**D. 真机**（**已取消**，维护者 2026-10-15：夹爪命令不应与机械臂命令一起发，不这样测试）
 
 | # | 场景 | 期望 | 来源 |
 |---|---|---|---|
@@ -297,7 +296,7 @@ MoveIt 的执行时长监控会把暂停的时间算作超时：MoveIt 计划须
 
 ### 驱动代码修改与测试进度
 
-Approach 第 1–6 步完成，每步一个提交、各自通过 `scripts/check.sh`；真机 D 组待操作者。最后一次 check：193 tests,
+Approach 第 1–6 步完成，每步一个提交、各自通过 `scripts/check.sh`；真机 D 组取消。最后一次 check：193 tests,
 0 failures, 4 skipped，连续两次。
 
 - **第 4 步**（速度缩放）：xacro 的 `<gpio name="${tf_prefix}speed_scaling">` 真机与 mock 共用；插件在 `read()` 里写因子，
@@ -343,4 +342,8 @@ Approach 第 1–6 步完成，每步一个提交、各自通过 `scripts/check.
 - **`~/status` 删除 `gripper_object`**：时限后 2 不代表仍夹着、掉落不可观测，`held`/`dropped` 会误导；原始的
   `gripper_motion_done` 保留，README 写明其含义与局限
 - 结果映射不变：1 SUCCEEDED（`reached_goal`），2 SUCCEEDED（`stalled`），3 ABORTED（运动中失去物体）
+
+**结束（2026-10-15）**：维护者取消 D 组（D1–D7）——夹爪与机械臂命令本就不应同时发，不在真机上测并发；轨迹暂停作为
+误用时的兜底保留，由 A、B 组覆盖。D6/D7（路径容差 0.85 rad 在高速下不误报、滞后组成）未做，容差依据仍是实测滞后
+116–133 ms（S19）。最后一次 check：194 tests, 0 failures, 4 skipped。
 

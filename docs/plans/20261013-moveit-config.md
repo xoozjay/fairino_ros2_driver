@@ -22,6 +22,8 @@ LIN / CIRC）。以维护者给定的法兰整圆（TODO.md "验收：法兰走�
 - README（包内）写明用法与安全约定
 - （修订）`gripper:=pgi140` 时 SRDF 禁用 `<prefix>left_finger_link`–`<prefix>right_finger_link`：两指网格在任何开度都互相穿插
   （闭合约 47 mm、全开约 12 mm，厂商模型亦然），二者是兄弟 link，默认碰撞矩阵不会禁用，不禁用则每次规划都报自碰撞
+  （维护者已同意）。**夹爪与机械臂之间的碰撞须保留**：夹爪各 link 与非相邻的机械臂 link 不得因 `collisions_updater`
+  采样"从未碰撞"而禁用（采样会漏掉少见位形），只禁用相邻对与两指之间；有测试位形让夹爪碰前臂时规划被拒
 - （修订）夹爪 goal 经 MoveIt 执行前，执行时长监控已解决（见 Approach 4）；未解决前只用整圆等不含夹爪的验收
 
 ## Context
@@ -37,7 +39,7 @@ LIN / CIRC）。以维护者给定的法兰整圆（TODO.md "验收：法兰走�
   `moveit_setup_assistant/collisions_updater`（命令行生成自碰撞禁用表）。**未装 `moveit_py`**——脚本用 rclpy 动作客户端
 - URDF 关节限位只有位置与速度（FR5：J1–J3 3.15 rad/s），没有加速度；Pilz 与时间参数化需要加速度限
 - 驱动侧保护：单周期步长 ≤ URDF 最高速度 × cmdT；伺服流空闲停发（`docs/sdk_quirks.md` S18）；
-  机械臂与夹爪须轮流命令，夹爪忙时机械臂被扣住，夹爪完成后 2 s 内命令未回到停住位置即保护停止
+  机械臂与夹爪须轮流命令；误用时（夹爪忙时来了轨迹）轨迹经 `speed_scaling` 暂停、夹爪结束后继续
   （`fr_robot_driver/README.md` "夹爪"）
 - 整圆（FK 已核对：给定关节与位姿相差 0.10 mm）：`base_link` 下 y = −400 mm 平面，圆心 (191.6667, −400, 430)，
   半径 108.3333 mm，姿态 (90, 0, 0) 不变；最左点 L = (83.3333, −400, 430)
@@ -59,12 +61,12 @@ LIN / CIRC）。以维护者给定的法兰整圆（TODO.md "验收：法兰走�
 3. **真机步骤**：维护者确认现场与急停 → 驱动启动 → 10% 移到 P1，停，确认 → 先 `--dry-run` → 10% 整圆 → 30% 整圆 →
    每步后 `fr_probe` 记录法兰位姿
 
-4. **（修订）夹爪与 MoveIt 的执行监控（阻塞性前置条件）**：单点的夹爪 goal 期望时长约 0，而真机夹爪运动一般 2–5 s，
-   最长到 `MoveGripper` 的 `max_time` 上限 30 s，
-   MoveIt 的执行时长监控（`trajectory_execution.execution_duration_monitoring`）会在超时后取消它；（推演）取消时
-   `parallel_gripper_action_controller` 以"当前开度"保持，而运动开始约 0.8 s 内帧报 0 %、驱动沿用旧开度（G10），
-   于是夹爪运动结束后又被开回去。实施前须选定做法（对夹爪控制器放宽执行时长或关闭监控，或待夹爪改 action 的计划），
-   经维护者批准后再接入夹爪
+4. **（修订）夹爪与 MoveIt 的执行监控（阻塞性前置条件，做法待批）**：MoveIt 执行每段轨迹时按"期望时长 × 1.1 + 0.5 s"
+   （`trajectory_execution` 的默认值）计时，超时即取消 goal、执行报 `TIMED_OUT`。夹爪 goal 是单点、期望时长约 0，
+   允许只有 0.5 s，而真机夹爪运动一般 2–5 s，最长 30 s（驱动对夹爪 goal 的上限）。现驱动由插件直接提供夹爪 action，
+   已发出的运动被取消时照常走完、不会开回去，但 MoveIt 仍把一次正常的开合判为失败、中止后续执行。
+   提议：只对夹爪控制器放宽，`moveit_simple_controller_manager.<ns>/gripper_controller.allowed_goal_duration_margin: 31.0`
+   （MoveIt 2 按控制器读取该参数，覆盖全局值；机械臂仍用默认监控；带命名空间的控制器名能否作参数名须实测）。经维护者批准后再接入夹爪
 
 **不在本计划**：双臂规划场景（另立计划，TODO 保留）；工作台碰撞物体；整条轨迹交给控制器执行。
 

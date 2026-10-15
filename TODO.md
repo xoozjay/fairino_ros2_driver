@@ -55,7 +55,6 @@
 
 - [ ] 合入前收敛 `agent/dev`：[docs/plans/20261013-pre-merge-cleanup.md](docs/plans/20261013-pre-merge-cleanup.md)
       —— done when: 该计划 done、维护者合入
-- [ ] 真机复测发现的夹爪完成判定、过期夹爪命令、扣臂与跟随滞后：[docs/plans/20261014-gripper-arm-retest-fixes.md](docs/plans/20261014-gripper-arm-retest-fixes.md) —— done when: 该计划 done
 - [ ] 夹爪不经运动队列控制（末端 485 `AxleSensorRegWrite` 或 Modbus 直连主机），让机械臂与夹爪真正同时动 —— done when: 真机验证可行性，再决定是否立计划
 - [ ] 合入后：FK 检查改用 KDL（读 `HardwareInfo::original_xml`，删 `kinematics.hpp` 与 xacro 拼出的参数）；现实现假定关节都绕
       z 轴转，`fairino3_mt_v6` 的倾斜轴会算错 —— done when: 单独计划 done，真机偏差与现实现一致
