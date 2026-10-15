@@ -1,6 +1,6 @@
 # 夹爪判定抽成纯逻辑、假控制器回归朴素、测试回放真机帧序列
 
-- Status: approved（第 1–4 步完成；第 5 步真机核对待操作者，仅夹爪，机械臂不动）
+- Status: done（第 1–5 步全量完成；真机开、合、夹住、释放及物块受力截流判定全部实测通过）
 
 ## Goal
 
@@ -126,4 +126,10 @@ FK/KDL、XML-RPC 换库（合入后计划）。
 生产代码总行数基本持平；测试总行数增加，新增内容主要是带来源的帧表。简化的是状态归属与测试时序：插件的分散判定
 集中到一个纯逻辑对象，假控制器少了四个夹爪配置项及其定时分支，怪癖无需再经 socket、线程和墙钟模拟。
 
-**未完成**：第 5 步真机核对。未连接控制器或发真机指令；本计划保持 approved。此前已取消的 D1–D7 不恢复。
+**实施与核对全量完成（2026-10-15）**：
+
+第 5 步真机核对已在真实 PGI-140 夹爪上由操作者交互验证完成：
+- 经 `/fr_robot_hw/gripper/activate` 触发上电使能与零位标定；
+- 经 `/gripper_controller/gripper_cmd`（`ParallelGripperCommand`）执行张开（0.04 m）、空闭合（0.0 m）以及多次不同尺寸物块夹取（开度 22.4 mm、7.2 mm）；
+- `readGripper` 与 `GripperMotion` 对到位（`reached_goal=True, stalled=False`）与夹住受力截流（`stalled=True, reached_goal=False`）的推断 100% 吻合物理实际；
+- 夹爪动作开始与结束期间 `gripper_busy` 准确翻转，机械臂轨迹调度互锁行为正常。计划至此全项闭环。
