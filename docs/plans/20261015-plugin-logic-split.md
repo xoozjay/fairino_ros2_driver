@@ -22,7 +22,7 @@
 
 ## Context
 
-**现状**（`main` = `174cd67`）
+**现状**（`main` = `c111883`）
 
 - `fr_robot_driver/src/fr_robot_hardware_interface.cpp` 1062 行：`on_init` 77–315（参数、节点、服务、action）、
   `on_configure` 316–455、`read()` 727–771、`write()` 772–831、夹爪 832–1039；头文件里互斥量、原子量、线程、定时器、
@@ -30,7 +30,7 @@
 - 驱动测试 34 s（最近一次 check）：`test_hardware_interface` 31 个用例中 14 个超过 0.9 s，最慢的是夹爪目标类
   （`GoalsSendPositionAndForceAndIgnoreVelocity` 2.7 s、`AFailedCallKeeps…` 2.6 s、`GoalsAreRejected…` 2.1 s、
   `ACanceledGoal…` 2.0 s、`AGraspSucceeds…` 2.0 s、`ANewGoalReplaces…` 1.9 s）；`test_trajectory_pause` 3.2 s
-- 合入前的逐提交检查中，`dcaa328` 在负载下偶发失败一次（插件测试依赖真实时间）
+- 合入前的逐提交检查中，`d172b9a` 在负载下偶发失败一次（插件测试依赖真实时间）
 
 **为什么不照搬 UR 把 ROS 接口移到控制器**（TODO.md 原写法）
 
@@ -104,16 +104,16 @@ rclcpp 的节点/服务/action/定时器、清理线程与链路监视。`reset_
 
 **拆分与实现**：
 
-1. `ArmGate`（`arm_gate.hpp`，提交 `0f40d4b`）：接管 `write()` 的机械臂决策——单周期步长检查、控制器频率与 `cmdT`
+1. `ArmGate`（`arm_gate.hpp`，提交 `12415e3`）：接管 `write()` 的机械臂决策——单周期步长检查、控制器频率与 `cmdT`
    的分频比、夹爪忙时保持原地、以及命令是否变化的判定。8 个新单元测试，0 ms；取代插件中 5 个慢测试
-2. `GripperGoals`（`gripper_goals.hpp`，提交 `3fd5d83`）：接管夹爪 action 目标的接受/拒绝、抢占、取消、epoch 作废、
+2. `GripperGoals`（`gripper_goals.hpp`，提交 `91468a6`）：接管夹爪 action 目标的接受/拒绝、抢占、取消、epoch 作废、
    发送时机（机械臂静止、流停发、固件队列排空）以及完成标志位到 action 结果的映射。顺带修 **C5**：发送线程不在时
    目标中止而非永远等待。8 个新单元测试，0 ms；取代插件中 6 个慢测试
-3. `preconditions.hpp`（提交 `8060f50`）：接管 configure（版本白名单、型号核对、正运动学法兰核对）、activate（状态新鲜、
+3. `preconditions.hpp`（提交 `a7dcc7c`）：接管 configure（版本白名单、型号核对、正运动学法兰核对）、activate（状态新鲜、
    无故障、法兰核对）、夹爪激活（前置条件）、以及 `reset_error` 的决策。`reset_policy.hpp` 合并入此文件。
    顺带修 **C4**：`onGripperActivate` 仅在调用 `ActGripper` 时持 `api_mutex_`，等待激活位的 3 s 不再持锁，不再阻塞
    `reset_error`。8 个新单元测试，0 ms
-4. **C2**（提交 `db1f1f1`）：真机分支的 URDF 不再声明 `left_finger_joint` 的 `position` 与 `max_effort` 命令接口，
+4. **C2**（提交 `8032cdf`）：真机分支的 URDF 不再声明 `left_finger_joint` 的 `position` 与 `max_effort` 命令接口，
    插件也不再要求它们；开度状态接口保留。mock 保留（上游 `gripper_controller` 写入）
 5. **测试精简与端到端测试**：
    - 插件测试用例由 31 个减少到 16 个（只留安全承诺用例）；夹爪测试合并为单个端到端用例 `EndToEndMotionPausesTrajectoriesAndSendsParameters`
