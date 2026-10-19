@@ -43,6 +43,12 @@ ros2 launch fr_description view_robot.launch.py model:=fairino20_v6
 fairino3_v6, fairino3_mt_v6, fairino5_v6, fairino10_v6, fairino16_v6,
 fairino20_v6, fairino30_v6, fr3wml, fr3wms, fr5wm
 
+新增型号：在 `config/<model>/` 放 4 个参数文件、在 `meshes/<model>/` 放 mesh（格式同
+`scripts/generate_from_vendor.py` 的输出），宏无需改动。
+
+`config/*.yaml` 与 `urdf/fr_macro.xacro` 是数据源头，改参数直接改它们；`references/fairino_vendor/`
+只是提取时的只读基线。
+
 ## 数据来源与命名规范化
 
 参数文件与 mesh 提取自 vendored URDF（上游
