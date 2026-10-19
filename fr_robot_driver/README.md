@@ -182,6 +182,20 @@ ros2 launch fr_robot_driver fr_control.launch.py \
 ros2 launch fr_robot_driver dual_fr_cell.launch.py
 ```
 
+## 验证
+
+mock 与真机分支用同一组检查：
+
+- `ros2 control list_controllers` 全部 `active`；
+- `ros2 topic echo /<ns>/joint_states --once` 为初始位形；
+- 发一条 FollowJointTrajectory，读回的关节位置为轨迹终点。
+
+真机分支（`use_mock_hardware:=false ip:=<控制器>`，已在 3.8.3 仿真器与 3.8.4.2 真机 FR5 正装上验证）另查：
+
+- 硬件组件为 `active`，`fr_status/fault_class` 为 0；
+- `ros2 topic echo /<ns>/<tf_prefix>fr_robot_hw/status --once` 为 OK、`link: up`；
+- 按上文"故障与恢复"演练一次：步长检查、`reset_error`、重新激活。
+
 ## 双机工作台 demo
 
 两台 FR5 对称安装（x=±0.4m，相向），演示多机隔离与初始化配置的重要性：
