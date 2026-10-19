@@ -1,6 +1,6 @@
 # 精简 AGENTS.md，把本项目特有的工作流写成 Project rules
 
-- Status: approved
+- Status: done
 
 ## Goal
 
@@ -69,8 +69,21 @@
 
 ## Result
 
-<完成后填写>
+`AGENTS.md` 由 136 行减到 62 行：项目一段、常用命令、Project rules、文档地图（表）。去向：
 
-- Commits: <subjects>
-- Checked by: <...>. Not checked: <...>
+- 版本锁定表、`references/` 恢复命令、`libfairino/docs/` 说明 → `docs/sdk_quirks.md` §一"锁定版本"
+- 新增型号步骤、参数源头 → `fr_description/README.md`
+- mock 与真机的验证步骤 → `fr_robot_driver/README.md`"验证"；Jazzy 约定与初始位形的说明原已在该 README
+- `on_deactivate`/`on_error` 不做网络操作：留作 Project rule，细节原已在 `docs/architecture.md`
+- 删除：渐进式开发协议、计划流程的复述（`docs/plans/README.md` 压成一句）、`references/fairino_vendor/` 子目录清单
+- `TODO.md` 开头不再把 `AGENTS.md` 当作设计与现状的出处
+- `.agents/notes/` 已加入 `.git/info/exclude`（本地）
+
+- Commits: `docs: move the version lock table into sdk_quirks`、
+  `docs(description): state how to add a model and where parameters live`、
+  `docs(driver): list the bring-up checks for mock and real hardware`、
+  `docs: reduce AGENTS.md to commands, project rules and a document map`
+- Checked by: `./scripts/check.sh` 通过（218 tests，0 failures）；`AGENTS.md` 与 `docs/plans/README.md` 中的相对链接都存在；
+  `git grep` 无指向已删段落（`AGENTS.md#…`、"AGENTS.md 版本约束"）的引用。
+  Not checked: 搬移前后逐句对照只做了人工比对。
 - Undo: `git revert`

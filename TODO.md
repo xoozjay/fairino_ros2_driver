@@ -1,6 +1,6 @@
 # TODO
 
-未决事项、未验证的断言与已知风险。设计决策与现状见 [AGENTS.md](AGENTS.md)、各包 README 和
+未决事项、未验证的断言与已知风险。设计决策与现状见各包 README 和
 `docs/`；改动历史见 `git log`。
 
 ## 待办
