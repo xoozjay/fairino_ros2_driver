@@ -128,6 +128,7 @@ ros2_control 驱动 `fr_robot_driver`、自研 C++ 客户端库 `fr_client_libra
 - [fr_description/README.md](fr_description/README.md) — 架构、用法、命名规范化对照表
 - [fr_client_library/README.md](fr_client_library/README.md) — 客户端库的三条通路、设计决策、工具与测试
 - [fr_robot_driver/README.md](fr_robot_driver/README.md) — 驱动架构、双机工作台 demo、踩坑记录
+- [docs/architecture.md](docs/architecture.md) — 架构图（Mermaid）：包、ROS 图、插件结构、线程模型、伺服链路、夹爪与启动时序
 - [docs/extension_pattern.md](docs/extension_pattern.md) — 扩展方式与验证命令
 - [docs/sdk_quirks.md](docs/sdk_quirks.md) — libfairino SDK（固件 3.8.4）陷阱清单与驱动设计约束
 - [docs/fault_handling.md](docs/fault_handling.md) — 急停/故障分级、状态机与恢复流程（固件硬性要求）
