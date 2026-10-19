@@ -18,9 +18,36 @@
 
 ## 一、版本
 
+### 锁定版本
+
+目标软件版本 **v3.8.4**，兼容下限 **3.7.6**。随版本变化的内容（API、参数形状、端口、帧格式、行为）一律以 3.8.4 为准；
+更新版本的 API（如 3.9.x 的 UDP 20007 伺服、CNDE 20005 订阅、`comType` 参数）不得借用。
+
+| 对象 | 锁定版本 | 位置 |
+|---|---|---|
+| 控制器软件 | **v3.8.4** | 真机 |
+| C++ SDK（裁剪自 [fairino-cpp-sdk](https://github.com/FAIR-INNOVATION/fairino-cpp-sdk)，首选阅读） | 分支 `3.8.4` = `831c662`（同 tag `v2.2.4-robot3.8.4`，`libfairino.so.2.2.4`） | `references/libfairino` |
+| C++ SDK（上游原始） | tag `v2.2.4-robot3.8.4` = `9543a2d` | `references/fairino-cpp-sdk` |
+| 官方文档 | tag `3.8.4` = `f34272d` | `references/fr_documentation` |
+| 仿真器 | 官方 SimMachine（Docker）v3.8.3，`192.168.58.2`（自报 `V3.8.8-LA` / web `v3.8.3`），只做功能/协议验证 | — |
+| ROS 2 / ros2_control | Jazzy / 4.48.1 | `references/ros2_control` |
+
+阅读 `references/` 前用 `git -C references/<repo> describe --tags --always` 确认版本；恢复（工作区根目录）：
+
+```sh
+git -C references/libfairino switch 3.8.4
+git -C references/fairino-cpp-sdk switch --detach v2.2.4-robot3.8.4
+GIT_LFS_SKIP_SMUDGE=1 git -C references/fr_documentation switch --detach 3.8.4
+```
+
+- `references/libfairino/docs/`（未跟踪）是早期针对 3.7.8 / 3.9.8 写的分析，与 3.8.4 源码冲突时以源码为准。
+- 升级版本 = 上表全部重新锁定 + 重新审计本文。
+
+### 版本陷阱
+
 | # | 陷阱 | 驱动对策 |
 |---|---|---|
-| V1 📋 | **SDK 版本必须与固件版本严格一致**。`references/` 下的 SDK 与文档仓库已锁定到 3.8.4（见 AGENTS.md 版本约束）；**3.9.x 的 SDK 连 3.8.4 固件是错的**（状态端口 20005、结构体不同） | 一律以 `v2.2.4-robot3.8.4` 为准；升级固件 = 重新审计本文 |
+| V1 📋 | **SDK 版本必须与固件版本严格一致**。`references/` 下的 SDK 与文档仓库已锁定到 3.8.4（见上表）；**3.9.x 的 SDK 连 3.8.4 固件是错的**（状态端口 20005、结构体不同） | 一律以 `v2.2.4-robot3.8.4` 为准；升级固件 = 重新审计本文 |
 | V2 🔍 | 版本不匹配**检测很弱**：`FRTcpClient::RecvPkg` 先按 `sizeof(ROBOT_STATE_PKG)`（**960 字节**，`pack(1)`）读，帧头长度更长时**静默接受、只用前缀**；更短时返回 `-3` 且已多读了下一帧的字节（流错位） | `on_configure` 用 `GetSoftwareVersion` 校验控制器版本，不符直接失败；不要依赖 SDK 的 `-3` |
 | V3 🔍 | 接收缓冲固定 1024 字节（栈上 `allRecvBuf[1024]`），帧长 > 1024 时**栈溢出**——固件 ≥ 3.8.6 的帧（1184 B 起）即触发：**控制器升级而 SDK 未升级 = 内存破坏** | 自研接收器按帧头长度动态处理 |
 | V4 🔍 | `GetSDKVersion()` **不访问控制器**，只返回编译期常量 `"SDK V2.2.4.0-robot v3.8.4"` | 不能用它判断固件版本 |
